@@ -29,43 +29,87 @@ pub struct ProcessState {
 pub struct ProcessMonitor {
     system: System,
     process_cache: HashMap<u32, ProcessInfo>,
+    last_full_refresh: std::time::Instant,
+    refresh_counter: u32,
 }
 
 impl ProcessMonitor {
     pub fn new() -> Self {
-        let mut system = System::new_all();
-        system.refresh_all();
+        let mut system = System::new();
+        // Only refresh CPU and memory initially, not all processes
+        system.refresh_cpu();
+        system.refresh_memory();
+        system.refresh_processes();
         
         ProcessMonitor {
             system,
-            process_cache: HashMap::new(),
+            process_cache: HashMap::with_capacity(200), // Pre-allocate for typical process count
+            last_full_refresh: std::time::Instant::now(),
+            refresh_counter: 0,
         }
     }
     
     pub fn refresh(&mut self) {
-        self.system.refresh_all();
+        self.refresh_counter += 1;
+        
+        // Full refresh every 10 cycles or every 10 seconds
+        let needs_full_refresh = self.refresh_counter % 10 == 0 
+            || self.last_full_refresh.elapsed().as_secs() > 10;
+        
+        if needs_full_refresh {
+            self.system.refresh_processes();
+            self.last_full_refresh = std::time::Instant::now();
+        } else {
+            // Lightweight refresh - only update existing processes
+            self.system.refresh_processes_specifics(
+                sysinfo::ProcessRefreshKind::new()
+                    .with_cpu()
+                    .with_memory()
+            );
+        }
+        
+        self.system.refresh_cpu();
         self.update_process_cache();
     }
     
     fn update_process_cache(&mut self) {
-        self.process_cache.clear();
+        // Instead of clearing, update existing entries and add new ones
+        let mut seen_pids = std::collections::HashSet::new();
         
         for (pid, process) in self.system.processes() {
-            let process_info = ProcessInfo {
-                pid: pid.as_u32(),
-                name: process.name().to_string(),
-                cpu_usage: process.cpu_usage(),
-                memory_mb: process.memory() as f64 / 1024.0,
-                status: format!("{:?}", process.status()),
-                parent_pid: process.parent().map(|p| p.as_u32()),
-                thread_count: 1,
-                run_time: process.run_time(),
-                user_time: 0.0,
-                system_time: 0.0,
-            };
+            let pid_u32 = pid.as_u32();
+            seen_pids.insert(pid_u32);
             
-            self.process_cache.insert(pid.as_u32(), process_info);
+            // Check if we need to update or insert
+            match self.process_cache.get_mut(&pid_u32) {
+                Some(existing) => {
+                    // Update only changed fields
+                    existing.cpu_usage = process.cpu_usage();
+                    existing.memory_mb = process.memory() as f64 / 1024.0;
+                    existing.status = format!("{:?}", process.status());
+                    existing.run_time = process.run_time();
+                }
+                None => {
+                    // New process, add it
+                    let process_info = ProcessInfo {
+                        pid: pid_u32,
+                        name: process.name().to_string(),
+                        cpu_usage: process.cpu_usage(),
+                        memory_mb: process.memory() as f64 / 1024.0,
+                        status: format!("{:?}", process.status()),
+                        parent_pid: process.parent().map(|p| p.as_u32()),
+                        thread_count: 1,
+                        run_time: process.run_time(),
+                        user_time: 0.0,
+                        system_time: 0.0,
+                    };
+                    self.process_cache.insert(pid_u32, process_info);
+                }
+            }
         }
+        
+        // Remove dead processes
+        self.process_cache.retain(|pid, _| seen_pids.contains(pid));
     }
     
     pub fn get_all_processes(&self) -> Vec<ProcessInfo> {

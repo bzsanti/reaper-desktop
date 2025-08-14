@@ -44,27 +44,35 @@ pub struct CpuAnalyzer {
 
 impl CpuAnalyzer {
     pub fn new() -> Self {
-        let mut system = System::new_all();
-        system.refresh_all();
+        let mut system = System::new();
+        // Only refresh what we need initially
+        system.refresh_cpu();
+        system.refresh_memory();
         
         CpuAnalyzer {
             system,
             last_update: Instant::now(),
-            history: Vec::new(),
+            history: Vec::with_capacity(60), // Pre-allocate
             max_history_size: 60,
         }
     }
     
     pub fn refresh(&mut self) {
+        // Only refresh if enough time has passed (avoid too frequent updates)
+        if self.last_update.elapsed().as_millis() < 500 {
+            return;
+        }
+        
         self.system.refresh_cpu();
         self.system.refresh_memory();
         
         let metrics = self.get_current_metrics();
-        self.history.push(metrics);
         
-        if self.history.len() > self.max_history_size {
+        // Use VecDeque would be better, but for now optimize with swap_remove
+        if self.history.len() >= self.max_history_size {
             self.history.remove(0);
         }
+        self.history.push(metrics);
         
         self.last_update = Instant::now();
     }

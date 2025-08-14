@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 struct ProcessInfo: Identifiable {
     let id: UInt32
@@ -108,18 +109,103 @@ class RustBridge: ObservableObject {
     private let updateQueue = DispatchQueue(label: "com.cpumonitor.update", qos: .userInitiated)
     private var isUpdating = false
     
+    // Adaptive refresh intervals
+    private var currentRefreshInterval: TimeInterval = 2.0
+    private let activeRefreshInterval: TimeInterval = 1.0
+    private let backgroundRefreshInterval: TimeInterval = 5.0
+    private let idleRefreshInterval: TimeInterval = 10.0
+    
+    // Track app state
+    private var isAppActive = true
+    private var lastSignificantChange = Date()
+    private var previousCpuUsage: Float = 0
+    
     init() {
         monitor_init()
+        setupAppStateObservers()
         startRefreshTimer()
     }
     
     deinit {
         refreshTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    private func setupAppStateObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func appDidBecomeActive() {
+        isAppActive = true
+        currentRefreshInterval = activeRefreshInterval
+        restartTimer()
+        refresh() // Immediate refresh when becoming active
+    }
+    
+    @objc private func appDidResignActive() {
+        isAppActive = false
+        currentRefreshInterval = backgroundRefreshInterval
+        restartTimer()
+    }
+    
+    @objc private func appWillTerminate() {
+        refreshTimer?.invalidate()
+    }
+    
+    private func restartTimer() {
+        refreshTimer?.invalidate()
+        startRefreshTimer()
     }
     
     private func startRefreshTimer() {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: currentRefreshInterval, repeats: true) { _ in
             self.refresh()
+        }
+    }
+    
+    private func adjustRefreshRate() {
+        // Check if there's significant CPU change
+        if let metrics = cpuMetrics {
+            let cpuDelta = abs(metrics.totalUsage - previousCpuUsage)
+            
+            if cpuDelta > 5.0 {
+                // Significant change detected
+                lastSignificantChange = Date()
+                if isAppActive {
+                    currentRefreshInterval = activeRefreshInterval
+                }
+            } else if Date().timeIntervalSince(lastSignificantChange) > 30 {
+                // No significant changes for 30 seconds, slow down
+                if isAppActive {
+                    currentRefreshInterval = min(currentRefreshInterval * 1.5, idleRefreshInterval)
+                }
+            }
+            
+            previousCpuUsage = metrics.totalUsage
+            
+            // Restart timer if interval changed significantly
+            if abs(refreshTimer?.timeInterval ?? 0 - currentRefreshInterval) > 0.5 {
+                restartTimer()
+            }
         }
     }
     
@@ -141,6 +227,9 @@ class RustBridge: ObservableObject {
                 self.processes = newProcesses
                 self.cpuMetrics = newMetrics
                 self.highCpuProcesses = newHighCpuProcesses
+                
+                // Adjust refresh rate based on activity
+                self.adjustRefreshRate()
             }
         }
     }

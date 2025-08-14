@@ -64,11 +64,20 @@ pub extern "C" fn get_all_processes() -> *mut CProcessList {
     };
     
     let count = processes.len();
+    if count == 0 {
+        return Box::into_raw(Box::new(CProcessList {
+            processes: std::ptr::null_mut(),
+            count: 0,
+        }));
+    }
+    
+    // Allocate memory for all processes at once
     let mut c_processes = Vec::with_capacity(count);
     
     for process in processes {
-        let name = CString::new(process.name.clone()).unwrap_or_else(|_| CString::new("").unwrap());
-        let status = CString::new(process.status.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        // Use unwrap_or_default for better performance
+        let name = CString::new(process.name.as_str()).unwrap_or_default();
+        let status = CString::new(process.status.as_str()).unwrap_or_default();
         
         c_processes.push(CProcessInfo {
             pid: process.pid,
@@ -82,8 +91,11 @@ pub extern "C" fn get_all_processes() -> *mut CProcessList {
         });
     }
     
+    let mut c_processes = c_processes.into_boxed_slice();
+    let processes_ptr = c_processes.as_mut_ptr();
+    
     let list = Box::new(CProcessList {
-        processes: c_processes.as_mut_ptr(),
+        processes: processes_ptr,
         count,
     });
     
@@ -99,11 +111,18 @@ pub extern "C" fn get_high_cpu_processes(threshold: f32) -> *mut CProcessList {
     };
     
     let count = processes.len();
+    if count == 0 {
+        return Box::into_raw(Box::new(CProcessList {
+            processes: std::ptr::null_mut(),
+            count: 0,
+        }));
+    }
+    
     let mut c_processes = Vec::with_capacity(count);
     
     for process in processes {
-        let name = CString::new(process.name.clone()).unwrap_or_else(|_| CString::new("").unwrap());
-        let status = CString::new(process.status.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        let name = CString::new(process.name.as_str()).unwrap_or_default();
+        let status = CString::new(process.status.as_str()).unwrap_or_default();
         
         c_processes.push(CProcessInfo {
             pid: process.pid,
@@ -117,8 +136,11 @@ pub extern "C" fn get_high_cpu_processes(threshold: f32) -> *mut CProcessList {
         });
     }
     
+    let mut c_processes = c_processes.into_boxed_slice();
+    let processes_ptr = c_processes.as_mut_ptr();
+    
     let list = Box::new(CProcessList {
-        processes: c_processes.as_mut_ptr(),
+        processes: processes_ptr,
         count,
     });
     
@@ -151,10 +173,19 @@ pub extern "C" fn free_process_list(list: *mut CProcessList) {
     
     unsafe {
         let list = Box::from_raw(list);
-        for i in 0..list.count {
-            let process = list.processes.add(i);
-            let _ = CString::from_raw((*process).name);
-            let _ = CString::from_raw((*process).status);
+        if !list.processes.is_null() && list.count > 0 {
+            // Reconstruct the boxed slice to properly deallocate
+            let processes = std::slice::from_raw_parts_mut(list.processes, list.count);
+            for process in processes.iter() {
+                if !process.name.is_null() {
+                    let _ = CString::from_raw(process.name);
+                }
+                if !process.status.is_null() {
+                    let _ = CString::from_raw(process.status);
+                }
+            }
+            // Deallocate the slice
+            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(list.processes, list.count));
         }
     }
 }
