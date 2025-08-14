@@ -1,4 +1,4 @@
-use libc::{kill, pid_t, SIGKILL, SIGTERM};
+use libc::{kill, pid_t, SIGKILL, SIGTERM, SIGSTOP, SIGCONT};
 
 #[derive(Debug)]
 pub struct KernelInterface;
@@ -70,12 +70,18 @@ impl KernelInterface {
         None
     }
     
-    pub fn suspend_process(&self, _pid: u32) -> bool {
-        false
+    pub fn suspend_process(&self, pid: u32) -> bool {
+        unsafe {
+            let result = kill(pid as pid_t, libc::SIGSTOP);
+            result == 0
+        }
     }
     
-    pub fn resume_process(&self, _pid: u32) -> bool {
-        false
+    pub fn resume_process(&self, pid: u32) -> bool {
+        unsafe {
+            let result = kill(pid as pid_t, libc::SIGCONT);
+            result == 0
+        }
     }
     
     fn is_kernel_process(&self, pid: u32) -> bool {

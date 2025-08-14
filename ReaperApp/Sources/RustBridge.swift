@@ -54,6 +54,26 @@ func free_process_list(_ list: UnsafeMutablePointer<CProcessList>?)
 @_silgen_name("free_cpu_metrics")
 func free_cpu_metrics(_ metrics: UnsafeMutablePointer<CCpuMetrics>?)
 
+@_silgen_name("terminate_process")
+func terminate_process(_ pid: UInt32) -> CKillResult
+
+@_silgen_name("force_kill_process")
+func force_kill_process(_ pid: UInt32) -> CKillResult
+
+@_silgen_name("suspend_process")
+func suspend_process(_ pid: UInt32) -> Bool
+
+@_silgen_name("resume_process")
+func resume_process(_ pid: UInt32) -> Bool
+
+enum CKillResult: Int32 {
+    case success = 0
+    case processNotFound = 1
+    case permissionDenied = 2
+    case processUnkillable = 3
+    case unknownError = 4
+}
+
 struct CProcessInfo {
     var pid: UInt32
     var name: UnsafeMutablePointer<CChar>?
@@ -200,5 +220,45 @@ class RustBridge: ObservableObject {
         }
         
         return highCpuProcs.sorted { $0.cpuUsage > $1.cpuUsage }
+    }
+    
+    func terminateProcess(_ pid: UInt32) -> (success: Bool, message: String) {
+        let result = terminate_process(pid)
+        switch result {
+        case .success:
+            return (true, "Process terminated successfully")
+        case .processNotFound:
+            return (false, "Process not found")
+        case .permissionDenied:
+            return (false, "Permission denied. Try running with sudo.")
+        case .processUnkillable:
+            return (false, "Process cannot be terminated (kernel process or I/O blocked)")
+        case .unknownError:
+            return (false, "Unknown error occurred")
+        }
+    }
+    
+    func forceKillProcess(_ pid: UInt32) -> (success: Bool, message: String) {
+        let result = force_kill_process(pid)
+        switch result {
+        case .success:
+            return (true, "Process killed successfully")
+        case .processNotFound:
+            return (false, "Process not found")
+        case .permissionDenied:
+            return (false, "Permission denied. Try running with sudo.")
+        case .processUnkillable:
+            return (false, "Process cannot be killed (kernel process)")
+        case .unknownError:
+            return (false, "Unknown error occurred")
+        }
+    }
+    
+    func suspendProcess(_ pid: UInt32) -> Bool {
+        return suspend_process(pid)
+    }
+    
+    func resumeProcess(_ pid: UInt32) -> Bool {
+        return resume_process(pid)
     }
 }

@@ -1,4 +1,4 @@
-use crate::{CpuAnalyzer, ProcessMonitor};
+use crate::{CpuAnalyzer, ProcessMonitor, KernelInterface, KillResult};
 use once_cell::sync::Lazy;
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -175,4 +175,49 @@ pub extern "C" fn free_string(s: *mut c_char) {
             let _ = CString::from_raw(s);
         }
     }
+}
+
+#[repr(C)]
+pub enum CKillResult {
+    Success = 0,
+    ProcessNotFound = 1,
+    PermissionDenied = 2,
+    ProcessUnkillable = 3,
+    UnknownError = 4,
+}
+
+#[no_mangle]
+pub extern "C" fn terminate_process(pid: u32) -> CKillResult {
+    let kernel = KernelInterface::new();
+    match kernel.terminate_process(pid) {
+        KillResult::Success => CKillResult::Success,
+        KillResult::ProcessNotFound => CKillResult::ProcessNotFound,
+        KillResult::PermissionDenied => CKillResult::PermissionDenied,
+        KillResult::ProcessUnkillable(_) => CKillResult::ProcessUnkillable,
+        KillResult::UnknownError(_) => CKillResult::UnknownError,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn force_kill_process(pid: u32) -> CKillResult {
+    let kernel = KernelInterface::new();
+    match kernel.force_kill_process(pid) {
+        KillResult::Success => CKillResult::Success,
+        KillResult::ProcessNotFound => CKillResult::ProcessNotFound,
+        KillResult::PermissionDenied => CKillResult::PermissionDenied,
+        KillResult::ProcessUnkillable(_) => CKillResult::ProcessUnkillable,
+        KillResult::UnknownError(_) => CKillResult::UnknownError,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn suspend_process(pid: u32) -> bool {
+    let kernel = KernelInterface::new();
+    kernel.suspend_process(pid)
+}
+
+#[no_mangle]
+pub extern "C" fn resume_process(pid: u32) -> bool {
+    let kernel = KernelInterface::new();
+    kernel.resume_process(pid)
 }
