@@ -1,0 +1,14 @@
+[package]
+name = "reaper-core"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_core"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+once_cell = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "reaper-disk-monitor"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_disk_monitor"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+reaper-core = { path = "../../core" }
+sysinfo = { workspace = true }
+serde = { workspace = true }

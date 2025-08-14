@@ -1,0 +1,17 @@
+[package]
+name = "reaper-cpu-monitor"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_cpu_monitor"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+reaper-core = { path = "../../core" }
+libc = { workspace = true }
+sysinfo = { workspace = true }
+mach2 = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
