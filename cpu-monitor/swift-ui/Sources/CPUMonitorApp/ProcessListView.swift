@@ -3,12 +3,13 @@ import SwiftUI
 struct ProcessListView: View {
     @ObservedObject var rustBridge: RustBridge
     @Binding var searchText: String
+    @State private var displayedProcesses: [ProcessInfo] = []
     
     var filteredProcesses: [ProcessInfo] {
         if searchText.isEmpty {
-            return rustBridge.processes
+            return displayedProcesses
         } else {
-            return rustBridge.processes.filter { process in
+            return displayedProcesses.filter { process in
                 process.name.localizedCaseInsensitiveContains(searchText) ||
                 String(process.pid).contains(searchText)
             }
@@ -75,6 +76,12 @@ struct ProcessListView: View {
                     .font(.system(.body, design: .monospaced))
             }
             .width(100)
+        }
+        .onReceive(rustBridge.$processes) { newProcesses in
+            displayedProcesses = newProcesses
+        }
+        .onAppear {
+            displayedProcesses = rustBridge.processes
         }
     }
     

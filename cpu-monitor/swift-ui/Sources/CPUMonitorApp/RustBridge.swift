@@ -85,6 +85,8 @@ class RustBridge: ObservableObject {
     @Published var highCpuProcesses: [ProcessInfo] = []
     
     private var refreshTimer: Timer?
+    private let updateQueue = DispatchQueue(label: "com.cpumonitor.update", qos: .userInitiated)
+    private var isUpdating = false
     
     init() {
         monitor_init()
@@ -102,18 +104,33 @@ class RustBridge: ObservableObject {
     }
     
     func refresh() {
-        monitor_refresh()
-        fetchProcesses()
-        fetchCpuMetrics()
-        fetchHighCpuProcesses()
+        guard !isUpdating else { return }
+        
+        updateQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.isUpdating = true
+            defer { self.isUpdating = false }
+            
+            monitor_refresh()
+            
+            let newProcesses = self.fetchProcessesSync()
+            let newMetrics = self.fetchCpuMetricsSync()
+            let newHighCpuProcesses = self.fetchHighCpuProcessesSync()
+            
+            DispatchQueue.main.async {
+                self.processes = newProcesses
+                self.cpuMetrics = newMetrics
+                self.highCpuProcesses = newHighCpuProcesses
+            }
+        }
     }
     
-    private func fetchProcesses() {
-        guard let listPtr = get_all_processes() else { return }
+    private func fetchProcessesSync() -> [ProcessInfo] {
+        guard let listPtr = get_all_processes() else { return [] }
         defer { free_process_list(listPtr) }
         
         let list = listPtr.pointee
-        guard let processesPtr = list.processes else { return }
+        guard let processesPtr = list.processes else { return [] }
         
         var newProcesses: [ProcessInfo] = []
         
@@ -135,13 +152,11 @@ class RustBridge: ObservableObject {
             newProcesses.append(process)
         }
         
-        DispatchQueue.main.async {
-            self.processes = newProcesses.sorted { $0.cpuUsage > $1.cpuUsage }
-        }
+        return newProcesses.sorted { $0.cpuUsage > $1.cpuUsage }
     }
     
-    private func fetchCpuMetrics() {
-        guard let metricsPtr = get_cpu_metrics() else { return }
+    private func fetchCpuMetricsSync() -> CpuMetrics? {
+        guard let metricsPtr = get_cpu_metrics() else { return nil }
         defer { free_cpu_metrics(metricsPtr) }
         
         let cMetrics = metricsPtr.pointee
@@ -154,17 +169,15 @@ class RustBridge: ObservableObject {
             frequencyMHz: cMetrics.frequency_mhz
         )
         
-        DispatchQueue.main.async {
-            self.cpuMetrics = metrics
-        }
+        return metrics
     }
     
-    private func fetchHighCpuProcesses() {
-        guard let listPtr = get_high_cpu_processes(25.0) else { return }
+    private func fetchHighCpuProcessesSync() -> [ProcessInfo] {
+        guard let listPtr = get_high_cpu_processes(25.0) else { return [] }
         defer { free_process_list(listPtr) }
         
         let list = listPtr.pointee
-        guard let processesPtr = list.processes else { return }
+        guard let processesPtr = list.processes else { return [] }
         
         var highCpuProcs: [ProcessInfo] = []
         
@@ -186,8 +199,6 @@ class RustBridge: ObservableObject {
             highCpuProcs.append(process)
         }
         
-        DispatchQueue.main.async {
-            self.highCpuProcesses = highCpuProcs.sorted { $0.cpuUsage > $1.cpuUsage }
-        }
+        return highCpuProcs.sorted { $0.cpuUsage > $1.cpuUsage }
     }
 }
