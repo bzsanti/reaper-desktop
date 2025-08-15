@@ -15,7 +15,7 @@ struct ReaperApp: App {
                 Button("About Reaper") {
                     NSApp.orderFrontStandardAboutPanel(options: [
                         .applicationName: "Reaper",
-                        .applicationVersion: "0.1.0"
+                        .applicationVersion: "0.1.1"
                     ])
                 }
             }

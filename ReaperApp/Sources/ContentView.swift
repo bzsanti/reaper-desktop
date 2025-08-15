@@ -4,40 +4,95 @@ struct ContentView: View {
     @StateObject private var rustBridge = RustBridge()
     @State private var selectedTab = 0
     @State private var searchText = ""
+    @State private var selectedProcess: ProcessInfo?
+    @State private var showingDetails = false
+    @EnvironmentObject var appState: AppState
+    
+    // Version info
+    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+    private let buildVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1.0"
+    private let buildTimestamp = Date()
     
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-            
-            TabView(selection: $selectedTab) {
-                ProcessListView(rustBridge: rustBridge, searchText: $searchText)
+        HSplitView {
+            // Main content area
+            VStack(spacing: 0) {
+                headerView
+                
+                TabView(selection: $selectedTab) {
+                    ProcessListView(
+                        rustBridge: rustBridge,
+                        searchText: $searchText,
+                        selectedProcess: $selectedProcess,
+                        showingDetails: $showingDetails
+                    )
                     .tabItem {
                         Label("All Processes", systemImage: "list.bullet")
                     }
                     .tag(0)
-                
-                HighCpuView(rustBridge: rustBridge)
-                    .tabItem {
-                        Label("High CPU", systemImage: "flame")
+                    
+                    HighCpuView(rustBridge: rustBridge)
+                        .tabItem {
+                            Label("High CPU", systemImage: "flame")
+                        }
+                        .tag(1)
+                    
+                    SystemMetricsView(rustBridge: rustBridge)
+                        .tabItem {
+                            Label("System Metrics", systemImage: "speedometer")
+                        }
+                        .tag(2)
+                }
+            }
+            .frame(minWidth: 600)
+            
+            // Details panel (conditional)
+            if showingDetails {
+                if let process = selectedProcess {
+                    ProcessDetailView(process: process, rustBridge: rustBridge)
+                        .id(process.pid) // Force view recreation when process changes
+                        .transition(.move(edge: .trailing))
+                } else {
+                    // Empty state when no process is selected
+                    VStack {
+                        Spacer()
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("Select a Process")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                        Text("Click on a process to see its details")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
                     }
-                    .tag(1)
-                
-                SystemMetricsView(rustBridge: rustBridge)
-                    .tabItem {
-                        Label("System Metrics", systemImage: "speedometer")
-                    }
-                    .tag(2)
+                    .frame(minWidth: 300, idealWidth: 350, maxWidth: 400)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .transition(.move(edge: .trailing))
+                }
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .onChange(of: appState.shouldShowDetails) { shouldShow in
+            if shouldShow {
+                showingDetails = true
+                appState.shouldShowDetails = false
+            }
+        }
     }
     
     var headerView: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("CPU Monitor")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reaper")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    Text("v\(appVersion) • Build \(buildVersion)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
                 
                 Spacer()
                 
@@ -63,10 +118,24 @@ struct ContentView: View {
                     }
                 }
                 
+                // Details toggle button
+                Button(action: { 
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showingDetails.toggle()
+                    }
+                }) {
+                    Image(systemName: showingDetails ? "sidebar.right" : "sidebar.left")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut("i", modifiers: .command)
+                .help("Toggle Details Panel (⌘I)")
+                
                 Button(action: { rustBridge.refresh() }) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
+                .keyboardShortcut("r", modifiers: .command)
             }
             .padding(.horizontal)
             .padding(.top, 12)
@@ -77,6 +146,14 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                     TextField("Search processes...", text: $searchText)
                         .textFieldStyle(.plain)
+                    
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(8)
                 .background(Color.gray.opacity(0.1))

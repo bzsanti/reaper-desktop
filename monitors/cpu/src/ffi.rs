@@ -1,4 +1,4 @@
-use crate::{CpuAnalyzer, ProcessMonitor, KernelInterface, KillResult};
+use crate::{CpuAnalyzer, ProcessMonitor, KernelInterface, KillResult, ProcessDetails};
 use once_cell::sync::Lazy;
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -251,4 +251,149 @@ pub extern "C" fn suspend_process(pid: u32) -> bool {
 pub extern "C" fn resume_process(pid: u32) -> bool {
     let kernel = KernelInterface::new();
     kernel.resume_process(pid)
+}
+
+#[no_mangle]
+pub extern "C" fn get_cpu_usage_only() -> f32 {
+    // Lightweight function that only gets CPU usage, no process list
+    match CPU_ANALYZER.lock() {
+        Ok(mut analyzer) => {
+            analyzer.refresh();
+            analyzer.get_current_metrics().total_usage
+        }
+        Err(_) => 0.0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn monitor_cleanup() {
+    // Cleanup function for graceful shutdown
+    // The static mutexes will be cleaned up automatically
+    // This is here for explicit cleanup if needed
+}
+
+// Process Details FFI
+
+#[repr(C)]
+pub struct CProcessDetails {
+    pub pid: u32,
+    pub executable_path: *mut c_char,
+    pub arguments: *mut *mut c_char,
+    pub arguments_count: usize,
+    pub open_files: *mut *mut c_char,
+    pub open_files_count: usize,
+    pub connections: *mut *mut c_char,
+    pub connections_count: usize,
+    pub user: *mut c_char,
+    pub group: *mut c_char,
+}
+
+#[no_mangle]
+pub extern "C" fn get_process_details(pid: u32) -> *mut CProcessDetails {
+    let details = match ProcessDetails::new(pid) {
+        Some(d) => d,
+        None => return std::ptr::null_mut(),
+    };
+    
+    // Convert executable path
+    let path = CString::new(details.executable_path).unwrap_or_default();
+    
+    // Convert arguments to C strings
+    let mut c_args: Vec<*mut c_char> = details.arguments
+        .into_iter()
+        .map(|arg| CString::new(arg).unwrap_or_default().into_raw())
+        .collect();
+    
+    // Convert open files to C strings  
+    let mut c_files: Vec<*mut c_char> = details.open_files
+        .into_iter()
+        .map(|file| CString::new(file).unwrap_or_default().into_raw())
+        .collect();
+    
+    // Convert connections to C strings
+    let mut c_connections: Vec<*mut c_char> = details.connections
+        .into_iter()
+        .map(|conn| CString::new(conn).unwrap_or_default().into_raw())
+        .collect();
+    
+    // Convert user and group
+    let user = CString::new(details.user).unwrap_or_default();
+    let group = CString::new(details.group).unwrap_or_default();
+    
+    let result = Box::new(CProcessDetails {
+        pid: details.pid,
+        executable_path: path.into_raw(),
+        arguments: c_args.as_mut_ptr(),
+        arguments_count: c_args.len(),
+        open_files: c_files.as_mut_ptr(),
+        open_files_count: c_files.len(),
+        connections: c_connections.as_mut_ptr(),
+        connections_count: c_connections.len(),
+        user: user.into_raw(),
+        group: group.into_raw(),
+    });
+    
+    // Prevent vectors from being deallocated
+    std::mem::forget(c_args);
+    std::mem::forget(c_files);
+    std::mem::forget(c_connections);
+    
+    Box::into_raw(result)
+}
+
+#[no_mangle]
+pub extern "C" fn free_process_details(details: *mut CProcessDetails) {
+    if details.is_null() {
+        return;
+    }
+    
+    unsafe {
+        let details = Box::from_raw(details);
+        
+        // Free executable path
+        if !details.executable_path.is_null() {
+            let _ = CString::from_raw(details.executable_path);
+        }
+        
+        // Free arguments
+        if !details.arguments.is_null() && details.arguments_count > 0 {
+            let args = std::slice::from_raw_parts_mut(details.arguments, details.arguments_count);
+            for arg in args {
+                if !arg.is_null() {
+                    let _ = CString::from_raw(*arg);
+                }
+            }
+            let _ = Vec::from_raw_parts(details.arguments, details.arguments_count, details.arguments_count);
+        }
+        
+        // Free open files
+        if !details.open_files.is_null() && details.open_files_count > 0 {
+            let files = std::slice::from_raw_parts_mut(details.open_files, details.open_files_count);
+            for file in files {
+                if !file.is_null() {
+                    let _ = CString::from_raw(*file);
+                }
+            }
+            let _ = Vec::from_raw_parts(details.open_files, details.open_files_count, details.open_files_count);
+        }
+        
+        // Free connections
+        if !details.connections.is_null() && details.connections_count > 0 {
+            let conns = std::slice::from_raw_parts_mut(details.connections, details.connections_count);
+            for conn in conns {
+                if !conn.is_null() {
+                    let _ = CString::from_raw(*conn);
+                }
+            }
+            let _ = Vec::from_raw_parts(details.connections, details.connections_count, details.connections_count);
+        }
+        
+        // Free user and group
+        if !details.user.is_null() {
+            let _ = CString::from_raw(details.user);
+        }
+        if !details.group.is_null() {
+            let _ = CString::from_raw(details.group);
+        }
+    }
 }

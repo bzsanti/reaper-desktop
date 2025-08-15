@@ -67,6 +67,12 @@ func suspend_process(_ pid: UInt32) -> Bool
 @_silgen_name("resume_process")
 func resume_process(_ pid: UInt32) -> Bool
 
+@_silgen_name("get_process_details")
+func get_process_details(_ pid: UInt32) -> UnsafeMutablePointer<CProcessDetails>?
+
+@_silgen_name("free_process_details")
+func free_process_details(_ details: UnsafeMutablePointer<CProcessDetails>?)
+
 enum CKillResult: Int32 {
     case success = 0
     case processNotFound = 1
@@ -100,6 +106,30 @@ struct CCpuMetrics {
     var frequency_mhz: UInt64
 }
 
+struct CProcessDetails {
+    var pid: UInt32
+    var executable_path: UnsafeMutablePointer<CChar>?
+    var arguments: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var arguments_count: Int
+    var open_files: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var open_files_count: Int
+    var connections: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var connections_count: Int
+    var user: UnsafeMutablePointer<CChar>?
+    var group: UnsafeMutablePointer<CChar>?
+}
+
+struct ProcessDetailsInfo {
+    let pid: UInt32
+    let executablePath: String
+    let arguments: [String]
+    let openFiles: [String]
+    let connections: [String]
+    let user: String
+    let group: String
+}
+
+@MainActor
 class RustBridge: ObservableObject {
     @Published var processes: [ProcessInfo] = []
     @Published var cpuMetrics: CpuMetrics?
@@ -127,7 +157,6 @@ class RustBridge: ObservableObject {
     }
     
     deinit {
-        refreshTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -152,6 +181,35 @@ class RustBridge: ObservableObject {
             name: NSApplication.willTerminateNotification,
             object: nil
         )
+        
+        // Window visibility observers
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey),
+            name: NSWindow.didResignKeyNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillMiniaturize),
+            name: NSWindow.willMiniaturizeNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidDeminiaturize),
+            name: NSWindow.didDeminiaturizeNotification,
+            object: nil
+        )
     }
     
     @objc private func appDidBecomeActive() {
@@ -168,7 +226,38 @@ class RustBridge: ObservableObject {
     }
     
     @objc private func appWillTerminate() {
+        Task { @MainActor in
+            refreshTimer?.invalidate()
+        }
+    }
+    
+    @objc private func windowDidBecomeKey() {
+        // Window became active, resume normal refresh
+        if isAppActive {
+            currentRefreshInterval = activeRefreshInterval
+            restartTimer()
+            refresh()
+        }
+    }
+    
+    @objc private func windowDidResignKey() {
+        // Window lost focus, slow down
+        currentRefreshInterval = backgroundRefreshInterval
+        restartTimer()
+    }
+    
+    @objc private func windowWillMiniaturize() {
+        // Window is being minimized, stop refreshing
         refreshTimer?.invalidate()
+    }
+    
+    @objc private func windowDidDeminiaturize() {
+        // Window was restored, resume refreshing
+        if isAppActive {
+            currentRefreshInterval = activeRefreshInterval
+            startRefreshTimer()
+            refresh()
+        }
     }
     
     private func restartTimer() {
@@ -178,7 +267,9 @@ class RustBridge: ObservableObject {
     
     private func startRefreshTimer() {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: currentRefreshInterval, repeats: true) { _ in
-            self.refresh()
+            Task { @MainActor in
+                self.refresh()
+            }
         }
     }
     
@@ -210,31 +301,43 @@ class RustBridge: ObservableObject {
     }
     
     func refresh() {
+        // Skip refresh completely if app is not active
+        guard isAppActive else { return }
         guard !isUpdating else { return }
         
-        updateQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.isUpdating = true
-            defer { self.isUpdating = false }
-            
-            monitor_refresh()
-            
-            let newProcesses = self.fetchProcessesSync()
-            let newMetrics = self.fetchCpuMetricsSync()
-            let newHighCpuProcesses = self.fetchHighCpuProcessesSync()
-            
-            DispatchQueue.main.async {
-                self.processes = newProcesses
-                self.cpuMetrics = newMetrics
-                self.highCpuProcesses = newHighCpuProcesses
-                
-                // Adjust refresh rate based on activity
-                self.adjustRefreshRate()
+        isUpdating = true
+        
+        Task {
+            await withCheckedContinuation { continuation in
+                updateQueue.async { [weak self] in
+                    guard let self = self else {
+                        continuation.resume()
+                        return
+                    }
+                    
+                    monitor_refresh()
+                    
+                    let newProcesses = self.fetchProcessesSync()
+                    let newMetrics = self.fetchCpuMetricsSync()
+                    let newHighCpuProcesses = self.fetchHighCpuProcessesSync()
+                    
+                    Task { @MainActor in
+                        self.processes = newProcesses
+                        self.cpuMetrics = newMetrics
+                        self.highCpuProcesses = newHighCpuProcesses
+                        
+                        // Adjust refresh rate based on activity
+                        self.adjustRefreshRate()
+                        self.isUpdating = false
+                    }
+                    
+                    continuation.resume()
+                }
             }
         }
     }
     
-    private func fetchProcessesSync() -> [ProcessInfo] {
+    nonisolated private func fetchProcessesSync() -> [ProcessInfo] {
         guard let listPtr = get_all_processes() else { return [] }
         defer { free_process_list(listPtr) }
         
@@ -264,7 +367,7 @@ class RustBridge: ObservableObject {
         return newProcesses.sorted { $0.cpuUsage > $1.cpuUsage }
     }
     
-    private func fetchCpuMetricsSync() -> CpuMetrics? {
+    nonisolated private func fetchCpuMetricsSync() -> CpuMetrics? {
         guard let metricsPtr = get_cpu_metrics() else { return nil }
         defer { free_cpu_metrics(metricsPtr) }
         
@@ -281,7 +384,7 @@ class RustBridge: ObservableObject {
         return metrics
     }
     
-    private func fetchHighCpuProcessesSync() -> [ProcessInfo] {
+    nonisolated private func fetchHighCpuProcessesSync() -> [ProcessInfo] {
         guard let listPtr = get_high_cpu_processes(25.0) else { return [] }
         defer { free_process_list(listPtr) }
         
@@ -349,5 +452,59 @@ class RustBridge: ObservableObject {
     
     func resumeProcess(_ pid: UInt32) -> Bool {
         return resume_process(pid)
+    }
+    
+    func getProcessDetails(_ pid: UInt32) async -> ProcessDetailsInfo? {
+        guard let detailsPtr = get_process_details(pid) else { return nil }
+        defer { free_process_details(detailsPtr) }
+        
+        let details = detailsPtr.pointee
+        
+        // Convert executable path
+        let path = details.executable_path.map { String(cString: $0) } ?? ""
+        
+        // Convert arguments
+        var arguments: [String] = []
+        if let argsPtr = details.arguments, details.arguments_count > 0 {
+            for i in 0..<details.arguments_count {
+                if let argPtr = argsPtr[i] {
+                    arguments.append(String(cString: argPtr))
+                }
+            }
+        }
+        
+        // Convert open files
+        var openFiles: [String] = []
+        if let filesPtr = details.open_files, details.open_files_count > 0 {
+            for i in 0..<details.open_files_count {
+                if let filePtr = filesPtr[i] {
+                    openFiles.append(String(cString: filePtr))
+                }
+            }
+        }
+        
+        // Convert connections
+        var connections: [String] = []
+        if let connsPtr = details.connections, details.connections_count > 0 {
+            for i in 0..<details.connections_count {
+                if let connPtr = connsPtr[i] {
+                    connections.append(String(cString: connPtr))
+                }
+            }
+        }
+        
+        // Convert user and group
+        let user = details.user.map { String(cString: $0) } ?? "unknown"
+        let group = details.group.map { String(cString: $0) } ?? "unknown"
+        
+        return ProcessDetailsInfo(
+            pid: details.pid,
+            executablePath: path,
+            arguments: arguments,
+            openFiles: openFiles,
+            connections: connections,
+            user: user,
+            group: group
+        )
     }
 }

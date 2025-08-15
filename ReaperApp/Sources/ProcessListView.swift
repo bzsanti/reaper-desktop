@@ -3,6 +3,8 @@ import SwiftUI
 struct ProcessListView: View {
     @ObservedObject var rustBridge: RustBridge
     @Binding var searchText: String
+    @Binding var selectedProcess: ProcessInfo?
+    @Binding var showingDetails: Bool
     @State private var displayedProcesses: [ProcessInfo] = []
     @State private var selectedProcesses = Set<UInt32>()
     @State private var sortOrder = [KeyPathComparator(\ProcessInfo.cpuUsage, order: .reverse)]
@@ -127,7 +129,8 @@ struct ProcessListView: View {
         } primaryAction: { pids in
             if let pid = pids.first,
                let process = filteredProcesses.first(where: { $0.pid == pid }) {
-                showProcessDetails(process)
+                selectedProcess = process
+                showingDetails = true
             }
         }
         .onReceive(rustBridge.$processes) { newProcesses in
@@ -135,6 +138,13 @@ struct ProcessListView: View {
         }
         .onAppear {
             displayedProcesses = rustBridge.processes
+        }
+        .onChange(of: selectedProcesses) { newSelection in
+            // When selection changes, update the selected process
+            if let pid = newSelection.first,
+               let process = filteredProcesses.first(where: { $0.pid == pid }) {
+                selectedProcess = process
+            }
         }
         .alert("Process Action", isPresented: $showingAlert) {
             Button("OK", role: .cancel) { }
@@ -215,13 +225,11 @@ struct ProcessListView: View {
     }
     
     func showInActivityMonitor(_ process: ProcessInfo) {
-        NSWorkspace.shared.launchApplication("Activity Monitor")
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor") {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
     }
     
-    func showProcessDetails(_ process: ProcessInfo) {
-        // This will be implemented with ProcessDetailView
-        print("Show details for \(process.name)")
-    }
     
     // MARK: - Helpers
     

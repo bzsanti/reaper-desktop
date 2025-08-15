@@ -52,65 +52,69 @@ impl ProcessMonitor {
     pub fn refresh(&mut self) {
         self.refresh_counter += 1;
         
-        // Full refresh every 10 cycles or every 10 seconds
-        let needs_full_refresh = self.refresh_counter % 10 == 0 
-            || self.last_full_refresh.elapsed().as_secs() > 10;
+        // Full refresh every 30 cycles or every 30 seconds (reduced frequency)
+        let needs_full_refresh = self.refresh_counter % 30 == 0 
+            || self.last_full_refresh.elapsed().as_secs() > 30;
         
         if needs_full_refresh {
             self.system.refresh_processes();
             self.last_full_refresh = std::time::Instant::now();
         } else {
-            // Lightweight refresh - only update existing processes
+            // Ultra-lightweight refresh - only CPU for existing processes
             self.system.refresh_processes_specifics(
                 sysinfo::ProcessRefreshKind::new()
                     .with_cpu()
-                    .with_memory()
+                    // Skip memory updates unless necessary
             );
         }
         
         self.system.refresh_cpu();
-        self.update_process_cache();
+        self.update_process_cache_optimized();
     }
     
-    fn update_process_cache(&mut self) {
-        // Instead of clearing, update existing entries and add new ones
-        let mut seen_pids = std::collections::HashSet::new();
+    fn update_process_cache_optimized(&mut self) {
+        // Only update processes with significant changes
+        let mut seen_pids = std::collections::HashSet::with_capacity(self.process_cache.len());
         
         for (pid, process) in self.system.processes() {
             let pid_u32 = pid.as_u32();
             seen_pids.insert(pid_u32);
             
-            // Check if we need to update or insert
-            match self.process_cache.get_mut(&pid_u32) {
-                Some(existing) => {
-                    // Update only changed fields
-                    existing.cpu_usage = process.cpu_usage();
+            let new_cpu = process.cpu_usage();
+            
+            // Check if update is needed (CPU changed by more than 1%)
+            if let Some(existing) = self.process_cache.get_mut(&pid_u32) {
+                let cpu_delta = (existing.cpu_usage - new_cpu).abs();
+                if cpu_delta > 1.0 {
+                    // Significant change, update
+                    existing.cpu_usage = new_cpu;
                     existing.memory_mb = process.memory() as f64 / 1024.0;
                     existing.status = format!("{:?}", process.status());
                     existing.run_time = process.run_time();
                 }
-                None => {
-                    // New process, add it
-                    let process_info = ProcessInfo {
-                        pid: pid_u32,
-                        name: process.name().to_string(),
-                        cpu_usage: process.cpu_usage(),
-                        memory_mb: process.memory() as f64 / 1024.0,
-                        status: format!("{:?}", process.status()),
-                        parent_pid: process.parent().map(|p| p.as_u32()),
-                        thread_count: 1,
-                        run_time: process.run_time(),
-                        user_time: 0.0,
-                        system_time: 0.0,
-                    };
-                    self.process_cache.insert(pid_u32, process_info);
-                }
+                // Otherwise skip update to save processing
+            } else {
+                // New process, add it
+                let process_info = ProcessInfo {
+                    pid: pid_u32,
+                    name: process.name().to_string(),
+                    cpu_usage: new_cpu,
+                    memory_mb: process.memory() as f64 / 1024.0,
+                    status: format!("{:?}", process.status()),
+                    parent_pid: process.parent().map(|p| p.as_u32()),
+                    thread_count: 1,
+                    run_time: process.run_time(),
+                    user_time: 0.0,
+                    system_time: 0.0,
+                };
+                self.process_cache.insert(pid_u32, process_info);
             }
         }
         
         // Remove dead processes
         self.process_cache.retain(|pid, _| seen_pids.contains(pid));
     }
+    
     
     pub fn get_all_processes(&self) -> Vec<ProcessInfo> {
         self.process_cache.values().cloned().collect()

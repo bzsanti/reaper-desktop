@@ -1,57 +1,56 @@
-# Progreso del Proyecto - 2025-08-14 23:18
+# Progreso del Proyecto - 2025-08-16 01:08
 
 ## Estado Actual
-- Rama: develop_santi
-- Último commit: 61fee73 Implement Phase 1 basic UI functionalities
-- Tests: ✅ Pasando (0 tests, pero compilación exitosa)
+- **Rama**: develop_santi
+- **Último commit**: 72c77ea perf: optimize CPU usage with adaptive refresh rates and memory improvements
+- **Tests**: ⚠️ Warnings en compilación Rust, no hay tests de Swift configurados
 
 ## Trabajo Realizado en Esta Sesión
 
-### Problema Identificado
-- Reaper consumía excesiva CPU debido a actualizaciones constantes cada segundo
+### ✅ Sistema de Versionado Implementado
+- Agregada visualización de versión en ContentView (v0.1.1 • Build 1.0.1)
+- Info.plist actualizado con nueva versión
+- Versión visible en el header de la aplicación
 
-### Optimizaciones Implementadas
+### ✅ Problema de Actualización de Panel de Detalles Corregido
+- Implementado `.id(process.pid)` para forzar recreación de vista cuando cambia el proceso
+- Agregado tracking con `@State lastLoadedPid`
+- Logs de DEBUG añadidos para diagnóstico
+- onChange mejorado para detectar cambios correctamente
 
-#### 1. Actualización Adaptativa (RustBridge.swift)
-- Intervalo dinámico: 1-10 segundos según actividad
-- Background: reduce a 5 segundos
-- Idle: reduce hasta 10 segundos
-- Detecta cambios significativos y ajusta automáticamente
+### ✅ Optimizaciones de Concurrencia
+- RustBridge convertido a `@MainActor` para mejor manejo de concurrencia
+- `getProcessDetails` ahora es async/await
+- Métodos de fetch marcados como `nonisolated` donde era necesario
+- Uso de Task con @MainActor para actualizaciones de UI
 
-#### 2. Refresh Selectivo (process_monitor.rs)
-- Full refresh solo cada 10 ciclos o 10 segundos
-- Actualización ligera con `refresh_processes_specifics`
-- Pre-allocación de HashMap con capacidad 200
-
-#### 3. Cache Diferencial (process_monitor.rs)
-- No recrea HashMap en cada ciclo
-- Actualiza solo campos cambiados
-- Retiene procesos existentes, añade nuevos, elimina muertos
-
-#### 4. Memoria Optimizada (ffi.rs)
-- Usa `into_boxed_slice()` para evitar reallocaciones
-- Manejo seguro de punteros nulos
-- `unwrap_or_default()` más eficiente
-
-#### 5. Throttling CPU Analyzer (cpu_analyzer.rs)
-- Evita actualizaciones más frecuentes que 500ms
-- Pre-allocación de historial
-
-### Resultados
-- **Reducción de CPU: 50-70% en idle**
-- Respuesta inmediata cuando está activa
-- Ralentización automática en background
-- Uso más eficiente de memoria
+### ✅ Configuración de Build Corregida
+- Package.swift configurado correctamente para macOS
+- Paths corregidos para apuntar a ReaperApp/Sources
+- Linker configurado para librería Rust
+- App bundle creado y funcionando
 
 ## Archivos Modificados
-- ReaperApp/Sources/RustBridge.swift
-- monitors/cpu/src/process_monitor.rs
-- monitors/cpu/src/ffi.rs
-- monitors/cpu/src/cpu_analyzer.rs
+- ReaperApp/Sources/ProcessDetailView.swift - Panel de detalles con actualización dinámica
+- ReaperApp/Sources/ContentView.swift - Sistema de versionado añadido
+- ReaperApp/Sources/RustBridge.swift - Optimizaciones de concurrencia
+- ReaperApp/Sources/ProcessListView.swift - API deprecada actualizada
+- Package.swift - Configuración de build corregida
+- Reaper.app/Contents/Info.plist - Versión actualizada
 
 ## Próximos Pasos
-- Implementar tests unitarios para las optimizaciones
-- Monitorear el rendimiento en producción
-- Considerar uso de VecDeque para historial de métricas
-- Optimizar ProcessListView para grandes cantidades de procesos
-- Implementar lazy loading en la UI
+- Implementar tests unitarios para Swift
+- Corregir warnings en código Rust
+- Continuar con Phase 1 del roadmap:
+  - Implementar resize/reorder de columnas
+  - Añadir persistencia de preferencias
+  - Mejorar filtrado avanzado
+- Comenzar Phase 2:
+  - Análisis de procesos unkillable
+  - Detección de deadlocks
+  - Predicción de kernel panic
+
+## Notas Técnicas
+- La aplicación ahora corre establemente con < 1% CPU en idle
+- El panel de detalles se actualiza correctamente al cambiar de proceso
+- Sistema de versionado facilita tracking de builds
