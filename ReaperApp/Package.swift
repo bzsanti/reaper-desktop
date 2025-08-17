@@ -21,6 +21,9 @@ let package = Package(
                     "-L../target/release",
                     "-lreaper_core",
                     "-lreaper_cpu_monitor",
+                    "-lreaper_memory_monitor",
+                    "-lreaper_hardware_monitor",
+                    "-lreaper_network_monitor",
                     "-framework", "Security",
                     "-framework", "CoreFoundation"
                 ])

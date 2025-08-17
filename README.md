@@ -13,20 +13,25 @@ Reaper is a powerful system monitoring application for macOS that goes beyond tr
 
 ## ✨ Features
 
-### Current (v0.1.0)
+### Current (v0.2.0)
 - 📊 **Real-time Process Monitoring** - CPU, memory, and resource usage
 - 🔍 **Advanced Process Detection** - Identify unkillable and zombie processes
 - 📈 **System Metrics** - Load average, CPU cores, frequency monitoring
 - 🎨 **Native SwiftUI Interface** - Beautiful, responsive macOS app
 - ⚡ **High Performance** - Rust backend with minimal system impact
+- ✅ **Process Management** - Terminate, kill, suspend, and resume processes
+- 🔔 **Smart Notifications** - Visual feedback for all actions
+- ⌨️ **Keyboard Shortcuts** - Full keyboard control for power users
+- 💾 **Persistent Preferences** - Remember your settings between sessions
+- 🛡️ **Safety First** - Confirmation dialogs for destructive actions
 
 ### Coming Soon
-- 🎯 Process termination with context menu
-- 🔄 Column sorting and filtering
-- ⌨️ Keyboard shortcuts
-- 📝 Detailed process information panel
+- 🔄 Column resizing and reordering
+- 📦 Batch process operations
 - 💾 Memory, disk, and network monitors
 - 🚨 Configurable alerts and automation
+- 🔍 Advanced process analysis (deadlocks, I/O wait)
+- 📊 Historical performance graphs
 
 See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 

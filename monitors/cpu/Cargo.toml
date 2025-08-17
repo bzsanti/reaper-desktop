@@ -8,10 +8,13 @@ name = "reaper_cpu_monitor"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-reaper-core = { path = "../../core" }
-libc = { workspace = true }
+reaper_core = { path = "../../core", package = "reaper-core" }
 sysinfo = { workspace = true }
-mach2 = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }
+mach2 = { workspace = true }

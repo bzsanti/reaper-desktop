@@ -1,0 +1,20 @@
+[package]
+name = "reaper-hardware-monitor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "reaper_hardware_monitor"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+reaper-core = { path = "../../core" }
+sysinfo = { workspace = true }
+once_cell = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = { workspace = true }
+core-foundation = "0.9"

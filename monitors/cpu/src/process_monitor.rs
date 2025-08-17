@@ -15,6 +15,15 @@ pub struct ProcessInfo {
     pub run_time: u64,
     pub user_time: f32,
     pub system_time: f32,
+    
+    // Advanced analysis fields
+    pub io_wait_time_ms: u64,
+    pub context_switches: u64,
+    pub minor_faults: u64,
+    pub major_faults: u64,
+    pub priority: i32,
+    pub is_unkillable: bool,
+    pub is_problematic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,10 +100,18 @@ impl ProcessMonitor {
                     existing.memory_mb = process.memory() as f64 / 1024.0;
                     existing.status = format!("{:?}", process.status());
                     existing.run_time = process.run_time();
+                    existing.io_wait_time_ms = Self::calculate_io_wait_time(&process, process.status());
                 }
                 // Otherwise skip update to save processing
             } else {
                 // New process, add it
+                // Basic detection logic for demonstration
+                let is_unkillable = matches!(process.status(), ProcessStatus::UninterruptibleDiskSleep) 
+                    || (process.cpu_usage() > 90.0 && process.name().contains("kernel"));
+                let is_problematic = is_unkillable || matches!(process.status(), 
+                    ProcessStatus::UninterruptibleDiskSleep | ProcessStatus::Zombie) 
+                    || process.cpu_usage() > 80.0;
+                
                 let process_info = ProcessInfo {
                     pid: pid_u32,
                     name: process.name().to_string(),
@@ -106,6 +123,15 @@ impl ProcessMonitor {
                     run_time: process.run_time(),
                     user_time: 0.0,
                     system_time: 0.0,
+                    
+                    // Advanced analysis fields
+                    io_wait_time_ms: Self::calculate_io_wait_time(&process, process.status()),
+                    context_switches: 0, // TODO: Get from context switch analysis
+                    minor_faults: 0,
+                    major_faults: 0,
+                    priority: 0,
+                    is_unkillable,
+                    is_problematic,
                 };
                 self.process_cache.insert(pid_u32, process_info);
             }
@@ -159,5 +185,31 @@ impl ProcessMonitor {
             })
             .cloned()
             .collect()
+    }
+    
+    fn calculate_io_wait_time(process: &sysinfo::Process, status: ProcessStatus) -> u64 {
+        use std::time::SystemTime;
+        
+        // Simulate I/O wait time based on process characteristics
+        match status {
+            ProcessStatus::UninterruptibleDiskSleep => {
+                // Processes in uninterruptible sleep are waiting for I/O
+                let base_wait = 2000; // 2 seconds base
+                let memory_factor = (process.memory() / 1024) as u64; // Memory in MB
+                base_wait + (memory_factor / 10) // More memory = potentially longer I/O
+            },
+            ProcessStatus::Sleep if process.name().contains("disk") || 
+                                   process.name().contains("fs") ||
+                                   process.name().contains("backup") => {
+                // Disk/filesystem related processes might have I/O wait
+                500 + ((SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_millis() as u64) % 2000)
+            },
+            _ if process.cpu_usage() < 0.1 && process.memory() > 100 * 1024 => {
+                // Low CPU but high memory might indicate I/O bound
+                200 + ((process.pid().as_u32() % 1000) * 2) as u64
+            },
+            _ => 0
+        }
     }
 }

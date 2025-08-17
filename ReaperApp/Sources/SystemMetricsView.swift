@@ -14,6 +14,12 @@ struct SystemMetricsView: View {
                     loadAverageCard(metrics)
                     
                     systemInfoCard(metrics)
+                    
+                    cpuLimitedProcessesCard()
+                    
+                    if let hardware = rustBridge.hardwareMetrics {
+                        hardwareMetricsCard(hardware)
+                    }
                 }
             }
             .padding()
@@ -167,6 +173,242 @@ struct SystemMetricsView: View {
         } else {
             return "\(mhz) MHz"
         }
+    }
+    
+    func hardwareMetricsCard(_ hardware: HardwareMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Hardware Sensors")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                // Thermal state indicator
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(hardware.thermalState.color)
+                        .frame(width: 8, height: 8)
+                    Text(hardware.thermalState.description)
+                        .font(.caption)
+                        .foregroundColor(hardware.thermalState.color)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(hardware.thermalState.color.opacity(0.1))
+                .cornerRadius(6)
+            }
+            
+            // CPU Frequency
+            if hardware.cpuFrequencyMHz > 0 {
+                HStack {
+                    Image(systemName: "speedometer")
+                        .foregroundColor(.blue)
+                    Text("CPU Frequency")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.2f GHz", hardware.cpuFrequencyGHz))
+                        .font(.system(.body, design: .monospaced))
+                        .fontWeight(.medium)
+                }
+            }
+            
+            // Temperature Sensors
+            if !hardware.temperatures.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Temperature Sensors")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
+                    
+                    ForEach(hardware.temperatures) { sensor in
+                        HStack {
+                            Image(systemName: sensor.sensorType.icon)
+                                .foregroundColor(.secondary)
+                                .frame(width: 20)
+                            
+                            Text(sensor.name)
+                                .font(.system(.body, design: .monospaced))
+                                .lineLimit(1)
+                            
+                            Spacer()
+                            
+                            // Temperature value with color coding
+                            Text(String(format: "%.1f°C", sensor.valueCelsius))
+                                .font(.system(.body, design: .monospaced))
+                                .fontWeight(.medium)
+                                .foregroundColor(temperatureColor(sensor.valueCelsius))
+                            
+                            if sensor.isCritical {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.red)
+                                    .font(.caption)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            
+            // Power Metrics (if available)
+            if hardware.cpuPowerWatts != nil || hardware.gpuPowerWatts != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Power Consumption")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
+                    
+                    if let cpuPower = hardware.cpuPowerWatts {
+                        HStack {
+                            Image(systemName: "cpu")
+                                .foregroundColor(.secondary)
+                                .frame(width: 20)
+                            Text("CPU Power")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f W", cpuPower))
+                                .font(.system(.body, design: .monospaced))
+                                .fontWeight(.medium)
+                        }
+                    }
+                    
+                    if let gpuPower = hardware.gpuPowerWatts {
+                        HStack {
+                            Image(systemName: "gpu.card")
+                                .foregroundColor(.secondary)
+                                .frame(width: 20)
+                            Text("GPU Power")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f W", gpuPower))
+                                .font(.system(.body, design: .monospaced))
+                                .fontWeight(.medium)
+                        }
+                    }
+                    
+                    if let totalPower = hardware.totalPowerWatts {
+                        HStack {
+                            Image(systemName: "bolt.fill")
+                                .foregroundColor(.orange)
+                                .frame(width: 20)
+                            Text("Total Power")
+                                .fontWeight(.medium)
+                            Spacer()
+                            Text(String(format: "%.1f W", totalPower))
+                                .font(.system(.body, design: .monospaced))
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+    }
+    
+    func temperatureColor(_ celsius: Float) -> Color {
+        switch celsius {
+        case ..<50:
+            return .green
+        case 50..<65:
+            return .yellow
+        case 65..<80:
+            return .orange
+        default:
+            return .red
+        }
+    }
+    
+    func cpuLimitedProcessesCard() -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("CPU Limited Processes")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                if !rustBridge.cpuLimitedProcesses.isEmpty {
+                    Text("\(rustBridge.cpuLimitedProcesses.count) active")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(6)
+                }
+            }
+            
+            if rustBridge.cpuLimitedProcesses.isEmpty {
+                HStack {
+                    Image(systemName: "gauge.badge.minus")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    Text("No processes have CPU limits")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 60)
+                .padding()
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(rustBridge.cpuLimitedProcesses) { limitInfo in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    // Try to get process name from current processes
+                                    if let process = rustBridge.processes.first(where: { $0.pid == limitInfo.pid }) {
+                                        Text(process.name)
+                                            .font(.system(.body, design: .monospaced))
+                                            .fontWeight(.medium)
+                                    } else {
+                                        Text("PID \(limitInfo.pid)")
+                                            .font(.system(.body, design: .monospaced))
+                                            .fontWeight(.medium)
+                                    }
+                                    
+                                    Text("• \(limitInfo.limitType.description)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                HStack(spacing: 12) {
+                                    Label("\(Int(limitInfo.maxCpuPercent))% max", systemImage: "speedometer")
+                                        .font(.caption)
+                                        .foregroundColor(.orange)
+                                    
+                                    if limitInfo.niceValue != 0 {
+                                        Label("Nice: \(limitInfo.niceValue)", systemImage: "arrow.down.circle")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                    }
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                _ = rustBridge.removeProcessLimit(limitInfo.pid)
+                            }) {
+                                Image(systemName: "xmark.circle")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove CPU limit")
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.05))
+                        .cornerRadius(8)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
     }
 }
 

@@ -11,3 +11,9 @@ crate-type = ["staticlib", "cdylib"]
 reaper-core = { path = "../../core" }
 sysinfo = { workspace = true }
 serde = { workspace = true }
+once_cell = { workspace = true }
+libc = { workspace = true }
+regex = "1.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = { workspace = true }

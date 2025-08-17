@@ -11,3 +11,4 @@ crate-type = ["staticlib", "cdylib"]
 reaper-core = { path = "../../core" }
 sysinfo = { workspace = true }
 serde = { workspace = true }
+once_cell = "1.19"

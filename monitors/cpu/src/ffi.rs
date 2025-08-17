@@ -22,6 +22,17 @@ pub struct CProcessInfo {
     pub parent_pid: u32,
     pub thread_count: usize,
     pub run_time: u64,
+    pub user_time: f64,
+    pub system_time: f64,
+    
+    // Advanced analysis fields
+    pub io_wait_time_ms: u64,
+    pub context_switches: u64,
+    pub minor_faults: u64,
+    pub major_faults: u64,
+    pub priority: i32,
+    pub is_unkillable: u8,  // bool as u8 for C compatibility
+    pub is_problematic: u8, // bool as u8 for C compatibility
 }
 
 #[repr(C)]
@@ -75,9 +86,15 @@ pub extern "C" fn get_all_processes() -> *mut CProcessList {
     let mut c_processes = Vec::with_capacity(count);
     
     for process in processes {
-        // Use unwrap_or_default for better performance
-        let name = CString::new(process.name.as_str()).unwrap_or_default();
-        let status = CString::new(process.status.as_str()).unwrap_or_default();
+        // Create CStrings safely, handling potential errors
+        let name = match CString::new(process.name.as_str()) {
+            Ok(s) => s,
+            Err(_) => CString::new("Unknown").unwrap(),
+        };
+        let status = match CString::new(process.status.as_str()) {
+            Ok(s) => s,
+            Err(_) => CString::new("Unknown").unwrap(),
+        };
         
         c_processes.push(CProcessInfo {
             pid: process.pid,
@@ -88,6 +105,17 @@ pub extern "C" fn get_all_processes() -> *mut CProcessList {
             parent_pid: process.parent_pid.unwrap_or(0),
             thread_count: process.thread_count,
             run_time: process.run_time,
+            user_time: process.user_time as f64,
+            system_time: process.system_time as f64,
+            
+            // Advanced analysis fields
+            io_wait_time_ms: process.io_wait_time_ms,
+            context_switches: process.context_switches,
+            minor_faults: process.minor_faults,
+            major_faults: process.major_faults,
+            priority: process.priority,
+            is_unkillable: if process.is_unkillable { 1 } else { 0 },
+            is_problematic: if process.is_problematic { 1 } else { 0 },
         });
     }
     
@@ -121,8 +149,15 @@ pub extern "C" fn get_high_cpu_processes(threshold: f32) -> *mut CProcessList {
     let mut c_processes = Vec::with_capacity(count);
     
     for process in processes {
-        let name = CString::new(process.name.as_str()).unwrap_or_default();
-        let status = CString::new(process.status.as_str()).unwrap_or_default();
+        // Create CStrings safely, handling potential errors
+        let name = match CString::new(process.name.as_str()) {
+            Ok(s) => s,
+            Err(_) => CString::new("Unknown").unwrap(),
+        };
+        let status = match CString::new(process.status.as_str()) {
+            Ok(s) => s,
+            Err(_) => CString::new("Unknown").unwrap(),
+        };
         
         c_processes.push(CProcessInfo {
             pid: process.pid,
@@ -133,6 +168,17 @@ pub extern "C" fn get_high_cpu_processes(threshold: f32) -> *mut CProcessList {
             parent_pid: process.parent_pid.unwrap_or(0),
             thread_count: process.thread_count,
             run_time: process.run_time,
+            user_time: process.user_time as f64,
+            system_time: process.system_time as f64,
+            
+            // Advanced analysis fields
+            io_wait_time_ms: process.io_wait_time_ms,
+            context_switches: process.context_switches,
+            minor_faults: process.minor_faults,
+            major_faults: process.major_faults,
+            priority: process.priority,
+            is_unkillable: if process.is_unkillable { 1 } else { 0 },
+            is_problematic: if process.is_problematic { 1 } else { 0 },
         });
     }
     

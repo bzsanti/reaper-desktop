@@ -72,14 +72,14 @@ impl KernelInterface {
     
     pub fn suspend_process(&self, pid: u32) -> bool {
         unsafe {
-            let result = kill(pid as pid_t, libc::SIGSTOP);
+            let result = kill(pid as pid_t, SIGSTOP);
             result == 0
         }
     }
     
     pub fn resume_process(&self, pid: u32) -> bool {
         unsafe {
-            let result = kill(pid as pid_t, libc::SIGCONT);
+            let result = kill(pid as pid_t, SIGCONT);
             result == 0
         }
     }

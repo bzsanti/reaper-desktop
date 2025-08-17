@@ -113,7 +113,7 @@ struct ProcessDetailView: View {
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(backgroundColorForStatus(process.status))
+                    .background(backgroundColorForStatus(process.status, isUnkillable: process.isUnkillable, isProblematic: process.isProblematic))
                     .cornerRadius(6)
             }
         }
@@ -469,8 +469,13 @@ struct ProcessDetailView: View {
         }
     }
     
-    private func backgroundColorForStatus(_ status: String) -> Color {
-        if status.contains("Run") {
+    private func backgroundColorForStatus(_ status: String, isUnkillable: Bool = false, isProblematic: Bool = false) -> Color {
+        // Priority for unkillable processes
+        if isUnkillable {
+            return .red.opacity(0.3)
+        } else if isProblematic {
+            return .orange.opacity(0.3)
+        } else if status.contains("Run") {
             return .green.opacity(0.2)
         } else if status.contains("Zombie") {
             return .red.opacity(0.2)

@@ -8,7 +8,15 @@ name = "reaper_core"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-libc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 once_cell = { workspace = true }
+sysinfo = { workspace = true }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# windows-rs will be added here when implementing Windows support
+# windows = { version = "0.52", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }

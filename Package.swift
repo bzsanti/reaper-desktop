@@ -20,7 +20,8 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags([
                     "-L", "target/release",
-                    "-lreaper_cpu_monitor"
+                    "-lreaper_cpu_monitor",
+                    "-lreaper_memory_monitor"
                 ])
             ]
         ),

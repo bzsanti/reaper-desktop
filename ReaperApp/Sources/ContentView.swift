@@ -3,14 +3,14 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var rustBridge = RustBridge()
     @State private var selectedTab = 0
-    @State private var searchText = ""
     @State private var selectedProcess: ProcessInfo?
     @State private var showingDetails = false
+    @FocusState private var isSearchFocused: Bool
     @EnvironmentObject var appState: AppState
     
     // Version info
-    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-    private let buildVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1.0"
+    private let appVersion = "0.3.1"  // CPU Limits visibility added
+    private let buildVersion = "20250817233446"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -22,7 +22,7 @@ struct ContentView: View {
                 TabView(selection: $selectedTab) {
                     ProcessListView(
                         rustBridge: rustBridge,
-                        searchText: $searchText,
+                        searchText: $appState.searchText,
                         selectedProcess: $selectedProcess,
                         showingDetails: $showingDetails
                     )
@@ -37,11 +37,23 @@ struct ContentView: View {
                         }
                         .tag(1)
                     
+                    MemoryView(rustBridge: rustBridge)
+                        .tabItem {
+                            Label("Memory", systemImage: "memorychip")
+                        }
+                        .tag(2)
+                    
+                    NetworkView(rustBridge: rustBridge)
+                        .tabItem {
+                            Label("Network", systemImage: "network")
+                        }
+                        .tag(3)
+                    
                     SystemMetricsView(rustBridge: rustBridge)
                         .tabItem {
                             Label("System Metrics", systemImage: "speedometer")
                         }
-                        .tag(2)
+                        .tag(4)
                 }
             }
             .frame(minWidth: 600)
@@ -78,6 +90,18 @@ struct ContentView: View {
             if shouldShow {
                 showingDetails = true
                 appState.shouldShowDetails = false
+            }
+        }
+        .onChange(of: appState.isSearchFieldFocused) { shouldFocus in
+            print("🔍 Search focus changed: \(shouldFocus)")
+            if shouldFocus {
+                print("🎯 Setting search field focus to true")
+                isSearchFocused = true
+                // Reset the flag after using it
+                DispatchQueue.main.async {
+                    appState.isSearchFieldFocused = false
+                    print("✅ Reset search focus flag")
+                }
             }
         }
     }
@@ -144,11 +168,12 @@ struct ContentView: View {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
-                    TextField("Search processes...", text: $searchText)
+                    TextField("Search processes...", text: $appState.searchText)
                         .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
                     
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
+                    if !appState.searchText.isEmpty {
+                        Button(action: { appState.searchText = "" }) {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.secondary)
                         }
