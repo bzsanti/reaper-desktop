@@ -166,14 +166,6 @@ impl CpuAnalyzer {
         }
     }
     
-    pub fn enable_high_frequency_sampling(&mut self, enabled: bool) {
-        self.high_frequency_sampling = enabled;
-        if enabled {
-            self.sampling_buffer = CpuSamplingBuffer::new(50, 1200); // 50ms intervals, 60 seconds
-        } else {
-            self.sampling_buffer = CpuSamplingBuffer::new(100, 600); // 100ms intervals, 60 seconds
-        }
-    }
     
     pub fn refresh(&mut self) {
         // Always try real-time sampling if enabled
@@ -198,6 +190,16 @@ impl CpuAnalyzer {
         self.history.push(metrics);
         
         self.last_update = Instant::now();
+    }
+    
+    pub fn enable_high_frequency_sampling(&mut self) {
+        self.high_frequency_sampling = true;
+        // Reset sampling buffer for fresh data
+        self.sampling_buffer = CpuSamplingBuffer::new(50, 1200); // 50ms interval, 1 minute buffer
+    }
+    
+    pub fn disable_high_frequency_sampling(&mut self) {
+        self.high_frequency_sampling = false;
     }
     
     pub fn collect_realtime_sample(&mut self) {

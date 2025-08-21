@@ -1526,4 +1526,155 @@ class RustBridge: ObservableObject {
             descendantCount: cNode.descendant_count
         )
     }
+    
+    // MARK: - Advanced CPU Analysis (v0.4.6)
+    
+    // FFI function declarations for thermal monitoring
+    @_silgen_name("initialize_thermal_monitor")
+    private static func initialize_thermal_monitor() -> UInt8
+    
+    @_silgen_name("get_thermal_data")
+    private static func get_thermal_data() -> UnsafeMutablePointer<CThermalData>?
+    
+    @_silgen_name("free_thermal_data")
+    private static func free_thermal_data(_ data: UnsafeMutablePointer<CThermalData>?)
+    
+    // FFI function declarations for CPU history
+    @_silgen_name("initialize_cpu_history")
+    private static func initialize_cpu_history() -> UInt8
+    
+    @_silgen_name("get_cpu_history")
+    private static func get_cpu_history(_ minutes: UInt32) -> UnsafeMutablePointer<CCpuHistoryData>?
+    
+    @_silgen_name("free_cpu_history")
+    private static func free_cpu_history(_ data: UnsafeMutablePointer<CCpuHistoryData>?)
+    
+    // FFI function declarations for high-frequency sampling
+    @_silgen_name("enable_high_frequency_sampling")
+    private static func enable_high_frequency_sampling() -> UInt8
+    
+    @_silgen_name("disable_high_frequency_sampling") 
+    private static func disable_high_frequency_sampling() -> UInt8
+    
+    // C structures for thermal monitoring
+    struct CThermalSensor {
+        var name: UnsafeMutablePointer<CChar>?
+        var location: UnsafeMutablePointer<CChar>?
+        var current_temperature: Float
+        var max_temperature: Float
+        var is_throttling: UInt8
+    }
+    
+    struct CThermalData {
+        var sensors: UnsafeMutablePointer<CThermalSensor>?
+        var sensor_count: Int
+        var cpu_temperature: Float
+        var is_throttling: UInt8
+        var hottest_temperature: Float
+    }
+    
+    // C structures for CPU history
+    struct CCpuHistoryPoint {
+        var timestamp: UInt64
+        var cpu_usage: Float
+        var frequency_mhz: UInt64
+        var temperature: Float
+    }
+    
+    struct CCpuHistoryData {
+        var points: UnsafeMutablePointer<CCpuHistoryPoint>?
+        var point_count: Int
+        var average_usage: Float
+        var max_usage: Float
+        var min_usage: Float
+    }
+    
+    // Public functions for thermal monitoring
+    func initializeThermalMonitor() {
+        let result = Self.initialize_thermal_monitor()
+        if result == 0 {
+            print("Failed to initialize thermal monitor")
+        }
+    }
+    
+    func getThermalData() -> ThermalData? {
+        guard let dataPtr = Self.get_thermal_data() else { return nil }
+        defer { Self.free_thermal_data(dataPtr) }
+        
+        let cData = dataPtr.pointee
+        var sensors: [ThermalSensor] = []
+        
+        if let sensorsPtr = cData.sensors, cData.sensor_count > 0 {
+            for i in 0..<cData.sensor_count {
+                let cSensor = sensorsPtr[i]
+                
+                let name = safeStringFromCString(cSensor.name)
+                let location = safeStringFromCString(cSensor.location)
+                
+                let sensor = ThermalSensor(
+                    name: name,
+                    location: location,
+                    currentTemperature: cSensor.current_temperature,
+                    maxTemperature: cSensor.max_temperature,
+                    isThrottling: cSensor.is_throttling != 0
+                )
+                sensors.append(sensor)
+            }
+        }
+        
+        return ThermalData(
+            sensors: sensors,
+            cpuTemperature: cData.cpu_temperature,
+            isThrottling: cData.is_throttling != 0,
+            hottestTemperature: cData.hottest_temperature
+        )
+    }
+    
+    // Public functions for CPU history
+    func initializeCpuHistory() {
+        let result = Self.initialize_cpu_history()
+        if result == 0 {
+            print("Failed to initialize CPU history")
+        }
+    }
+    
+    func getCpuHistory(minutes: UInt32) -> CpuHistoryData? {
+        guard let dataPtr = Self.get_cpu_history(minutes) else { return nil }
+        defer { Self.free_cpu_history(dataPtr) }
+        
+        let cData = dataPtr.pointee
+        var points: [CpuHistoryPoint] = []
+        
+        if let pointsPtr = cData.points, cData.point_count > 0 {
+            for i in 0..<cData.point_count {
+                let cPoint = pointsPtr[i]
+                
+                let point = CpuHistoryPoint(
+                    timestamp: Date(timeIntervalSince1970: TimeInterval(cPoint.timestamp)),
+                    cpuUsage: cPoint.cpu_usage,
+                    frequencyMHz: cPoint.frequency_mhz,
+                    temperature: cPoint.temperature
+                )
+                points.append(point)
+            }
+        }
+        
+        return CpuHistoryData(
+            points: points,
+            averageUsage: cData.average_usage,
+            maxUsage: cData.max_usage,
+            minUsage: cData.min_usage
+        )
+    }
+    
+    // Public functions for high-frequency sampling
+    func setHighFrequencySampling(_ enabled: Bool) {
+        let result = enabled ? 
+            Self.enable_high_frequency_sampling() : 
+            Self.disable_high_frequency_sampling()
+        
+        if result == 0 {
+            print("Failed to \(enabled ? "enable" : "disable") high-frequency sampling")
+        }
+    }
 }

@@ -10,7 +10,7 @@ struct ContentView: View {
     
     // Version info
     private let appVersion = "0.4.6"  // Advanced CPU Analysis - Phase 2 complete
-    private let buildVersion = "20250821144500"  // Unique build timestamp
+    private let buildVersion = "20250821192940"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -62,6 +62,19 @@ struct ContentView: View {
                             Label("System Metrics", systemImage: "speedometer")
                         }
                         .tag(4)
+                    
+                    // Advanced CPU Analysis Tab (v0.4.6)
+                    VStack {
+                        HStack {
+                            ThermalMonitorView(rustBridge: rustBridge)
+                            Divider()
+                            CpuHistoryView(rustBridge: rustBridge)
+                        }
+                    }
+                    .tabItem {
+                        Label("Advanced CPU", systemImage: "cpu")
+                    }
+                    .tag(5)
                 }
             }
             .frame(minWidth: 600)

@@ -645,3 +645,224 @@ pub extern "C" fn free_process_tree(tree: *mut CProcessTree) {
         }
     }
 }
+
+// ============================================================================
+// Advanced CPU Analysis FFI Exports (v0.4.6)
+// ============================================================================
+
+use crate::thermal_monitor::{ThermalMonitor, ThermalConfig};
+use crate::cpu_history::{CpuHistoryStore, CpuHistoryConfig};
+use once_cell::sync::OnceCell;
+use std::time::Duration;
+
+static THERMAL_MONITOR: OnceCell<Mutex<ThermalMonitor>> = OnceCell::new();
+static CPU_HISTORY: OnceCell<Mutex<CpuHistoryStore>> = OnceCell::new();
+
+// Thermal monitoring structures for FFI
+#[repr(C)]
+pub struct CThermalSensor {
+    pub name: *mut c_char,
+    pub location: *mut c_char,
+    pub current_temperature: f32,
+    pub max_temperature: f32,
+    pub is_throttling: u8, // bool as u8
+}
+
+#[repr(C)]
+pub struct CThermalData {
+    pub sensors: *mut CThermalSensor,
+    pub sensor_count: usize,
+    pub cpu_temperature: f32,
+    pub is_throttling: u8,
+    pub hottest_temperature: f32,
+}
+
+// CPU History structures for FFI
+#[repr(C)]
+pub struct CCpuHistoryPoint {
+    pub timestamp: u64,
+    pub cpu_usage: f32,
+    pub frequency_mhz: u64,
+    pub temperature: f32,
+}
+
+#[repr(C)]
+pub struct CCpuHistoryData {
+    pub points: *mut CCpuHistoryPoint,
+    pub point_count: usize,
+    pub average_usage: f32,
+    pub max_usage: f32,
+    pub min_usage: f32,
+}
+
+// Initialize thermal monitoring
+#[no_mangle]
+pub extern "C" fn initialize_thermal_monitor() -> u8 {
+    let config = ThermalConfig::default();
+    match ThermalMonitor::new(config) {
+        Ok(monitor) => {
+            THERMAL_MONITOR.set(Mutex::new(monitor)).unwrap_or(());
+            1 // success
+        }
+        Err(_) => 0 // failure
+    }
+}
+
+// Get current thermal data
+#[no_mangle]
+pub extern "C" fn get_thermal_data() -> *mut CThermalData {
+    let monitor = THERMAL_MONITOR.get_or_init(|| {
+        let config = ThermalConfig::default();
+        Mutex::new(ThermalMonitor::new(config).unwrap_or_else(|_| {
+            // Return a dummy monitor if initialization fails
+            ThermalMonitor::new(ThermalConfig {
+                polling_interval_ms: 5000,
+                temperature_threshold_celsius: 100.0,
+                throttling_detection_enabled: false,
+                sensor_blacklist: Vec::new(),
+                alert_on_high_temperature: false,
+                max_history_entries: 100,
+            }).unwrap()
+        }))
+    });
+
+    let mut monitor = monitor.lock().unwrap();
+    let _ = monitor.update(); // Update sensor readings
+
+    let sensors = monitor.get_sensors();
+    let cpu_temp = monitor.get_cpu_temperature().unwrap_or(0.0);
+    let is_throttling = monitor.is_throttling_active();
+    let hottest = monitor.get_hottest_temperature().unwrap_or(0.0);
+
+    // Convert to C structures
+    let c_sensors: Vec<CThermalSensor> = sensors.iter().map(|sensor| {
+        CThermalSensor {
+            name: CString::new(sensor.name.clone()).unwrap().into_raw(),
+            location: CString::new(format!("{:?}", sensor.location)).unwrap().into_raw(),
+            current_temperature: sensor.current_temperature,
+            max_temperature: sensor.max_temperature,
+            is_throttling: if is_throttling { 1 } else { 0 },
+        }
+    }).collect();
+
+    let thermal_data = Box::new(CThermalData {
+        sensors: Box::into_raw(c_sensors.into_boxed_slice()) as *mut CThermalSensor,
+        sensor_count: sensors.len(),
+        cpu_temperature: cpu_temp,
+        is_throttling: if is_throttling { 1 } else { 0 },
+        hottest_temperature: hottest,
+    });
+
+    Box::into_raw(thermal_data)
+}
+
+// Free thermal data
+#[no_mangle]
+pub extern "C" fn free_thermal_data(data: *mut CThermalData) {
+    if data.is_null() {
+        return;
+    }
+
+    unsafe {
+        let data = Box::from_raw(data);
+        
+        // Free sensor names and locations
+        if !data.sensors.is_null() {
+            let sensors = Vec::from_raw_parts(data.sensors, data.sensor_count, data.sensor_count);
+            for sensor in sensors {
+                if !sensor.name.is_null() {
+                    let _ = CString::from_raw(sensor.name);
+                }
+                if !sensor.location.is_null() {
+                    let _ = CString::from_raw(sensor.location);
+                }
+            }
+        }
+    }
+}
+
+// Initialize CPU history storage
+#[no_mangle]
+pub extern "C" fn initialize_cpu_history() -> u8 {
+    let config = CpuHistoryConfig::default();
+    match CpuHistoryStore::new(config) {
+        Ok(store) => {
+            CPU_HISTORY.set(Mutex::new(store)).unwrap_or(());
+            1 // success
+        }
+        Err(_) => 0 // failure
+    }
+}
+
+// Get CPU history for last N minutes
+#[no_mangle]
+pub extern "C" fn get_cpu_history(minutes: u32) -> *mut CCpuHistoryData {
+    let history = CPU_HISTORY.get_or_init(|| {
+        let config = CpuHistoryConfig::default();
+        Mutex::new(CpuHistoryStore::new(config).unwrap())
+    });
+
+    let history = history.lock().unwrap();
+    let duration = Duration::from_secs(minutes as u64 * 60);
+    let recent_data = history.get_recent_data(duration);
+    let stats = history.get_statistics(duration);
+
+    // Convert to C structures
+    let points: Vec<CCpuHistoryPoint> = recent_data.iter().map(|point| {
+        CCpuHistoryPoint {
+            timestamp: point.timestamp,
+            cpu_usage: point.total_usage,
+            frequency_mhz: point.frequency_mhz,
+            temperature: point.temperature.unwrap_or(0.0),
+        }
+    }).collect();
+
+    let history_data = Box::new(CCpuHistoryData {
+        points: Box::into_raw(points.into_boxed_slice()) as *mut CCpuHistoryPoint,
+        point_count: recent_data.len(),
+        average_usage: stats.average_cpu_usage,
+        max_usage: stats.max_cpu_usage,
+        min_usage: stats.min_cpu_usage,
+    });
+
+    Box::into_raw(history_data)
+}
+
+// Free CPU history data
+#[no_mangle]
+pub extern "C" fn free_cpu_history(data: *mut CCpuHistoryData) {
+    if data.is_null() {
+        return;
+    }
+
+    unsafe {
+        let data = Box::from_raw(data);
+        
+        // Free points array
+        if !data.points.is_null() {
+            let _ = Vec::from_raw_parts(data.points, data.point_count, data.point_count);
+        }
+    }
+}
+
+// Enable high-frequency CPU sampling
+#[no_mangle]
+pub extern "C" fn enable_high_frequency_sampling() -> u8 {
+    if let Ok(mut analyzer) = CPU_ANALYZER.lock() {
+        analyzer.enable_high_frequency_sampling();
+        1 // success
+    } else {
+        0 // failure
+    }
+}
+
+// Disable high-frequency CPU sampling
+#[no_mangle]
+pub extern "C" fn disable_high_frequency_sampling() -> u8 {
+    if let Ok(mut analyzer) = CPU_ANALYZER.lock() {
+        analyzer.disable_high_frequency_sampling();
+        1 // success
+    } else {
+        0 // failure
+    }
+}
