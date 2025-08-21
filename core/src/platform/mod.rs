@@ -240,6 +240,9 @@ pub trait ProcessAnalyzer: Send + Sync {
     
     /// Detect potential deadlock involving this process
     fn detect_deadlock(&self, pid: u32) -> PlatformResult<Option<DeadlockInfo>>;
+    
+    /// Collect stack trace for a process
+    fn collect_stack_trace(&self, pid: u32, duration_ms: u64) -> PlatformResult<StackTrace>;
 }
 
 /// Detailed process state information
@@ -298,6 +301,28 @@ pub enum DeadlockType {
     IoDeadlock,
     NetworkDeadlock,
     Unknown,
+}
+
+/// Stack trace information for a process
+#[derive(Debug, Clone)]
+pub struct StackTrace {
+    pub pid: u32,
+    pub thread_id: Option<u64>,
+    pub timestamp: std::time::SystemTime,
+    pub frames: Vec<StackFrame>,
+    pub sample_duration_ms: u64,
+    pub is_complete: bool,
+}
+
+/// Individual stack frame
+#[derive(Debug, Clone)]
+pub struct StackFrame {
+    pub address: u64,
+    pub symbol: Option<String>,
+    pub module: Option<String>,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub offset: Option<u64>,
 }
 
 /// Platform capability detection

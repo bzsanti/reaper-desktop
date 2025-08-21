@@ -2,6 +2,38 @@ import Foundation
 import AppKit
 import SwiftUI
 
+// MARK: - Process Tree FFI Declarations
+@_silgen_name("get_process_tree")
+func get_process_tree() -> UnsafeMutableRawPointer?
+
+@_silgen_name("free_process_tree")
+func free_process_tree(_ tree: UnsafeMutableRawPointer?)
+
+// C struct matching Rust CProcessTreeNode
+struct CProcessTreeNode {
+    var pid: UInt32
+    var name: UnsafeMutablePointer<CChar>?
+    var command: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var command_count: Int
+    var executable_path: UnsafeMutablePointer<CChar>?
+    var cpu_usage: Float
+    var memory_mb: Double
+    var status: UnsafeMutablePointer<CChar>?
+    var thread_count: Int
+    var children: UnsafeMutablePointer<CProcessTreeNode>?
+    var children_count: Int
+    var total_cpu_usage: Float
+    var total_memory_mb: Double
+    var descendant_count: Int
+}
+
+// C struct matching Rust CProcessTree
+struct CProcessTree {
+    var roots: UnsafeMutablePointer<CProcessTreeNode>?
+    var roots_count: Int
+    var total_processes: Int
+}
+
 struct ProcessInfo: Identifiable {
     let id: UInt32
     let pid: UInt32
@@ -46,6 +78,7 @@ struct ProcessInfo: Identifiable {
     }
 }
 
+
 struct CpuMetrics {
     let totalUsage: Float
     let coreCount: Int
@@ -86,6 +119,48 @@ struct ProcessMemoryInfo: Identifiable {
     
     var virtualMemoryMB: Double {
         Double(virtualMemoryBytes) / 1024.0 / 1024.0
+    }
+}
+
+struct DiskMetrics: Identifiable {
+    let id: String  // mount point as ID
+    let mountPoint: String
+    let name: String
+    let fileSystem: String
+    let totalBytes: UInt64
+    let availableBytes: UInt64
+    let usedBytes: UInt64
+    let usagePercent: Float
+    let isRemovable: Bool
+    let diskType: String
+    
+    var totalGB: Double {
+        Double(totalBytes) / 1024.0 / 1024.0 / 1024.0
+    }
+    
+    var availableGB: Double {
+        Double(availableBytes) / 1024.0 / 1024.0 / 1024.0
+    }
+    
+    var usedGB: Double {
+        Double(usedBytes) / 1024.0 / 1024.0 / 1024.0
+    }
+    
+    func formatBytes(_ bytes: UInt64) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var size = Double(bytes)
+        var unitIndex = 0
+        
+        while size >= 1024.0 && unitIndex < units.count - 1 {
+            size /= 1024.0
+            unitIndex += 1
+        }
+        
+        if unitIndex == 0 {
+            return "\(Int(size)) \(units[unitIndex])"
+        } else {
+            return String(format: "%.1f %@", size, units[unitIndex])
+        }
     }
 }
 
@@ -274,16 +349,19 @@ func free_process_list(_ list: UnsafeMutablePointer<CProcessList>?)
 func free_cpu_metrics(_ metrics: UnsafeMutablePointer<CCpuMetrics>?)
 
 @_silgen_name("terminate_process")
-func terminate_process(_ pid: UInt32) -> CKillResult
+func terminate_process(_ pid: UInt32) -> UnsafeMutablePointer<CActionResponse>?
 
 @_silgen_name("force_kill_process")
-func force_kill_process(_ pid: UInt32) -> CKillResult
+func force_kill_process(_ pid: UInt32) -> UnsafeMutablePointer<CActionResponse>?
 
 @_silgen_name("suspend_process")
-func suspend_process(_ pid: UInt32) -> Bool
+func suspend_process(_ pid: UInt32) -> UnsafeMutablePointer<CActionResponse>?
 
 @_silgen_name("resume_process")
-func resume_process(_ pid: UInt32) -> Bool
+func resume_process(_ pid: UInt32) -> UnsafeMutablePointer<CActionResponse>?
+
+@_silgen_name("free_action_response")
+func free_action_response(_ response: UnsafeMutablePointer<CActionResponse>?)
 
 @_silgen_name("get_process_details")
 func get_process_details(_ pid: UInt32) -> UnsafeMutablePointer<CProcessDetails>?
@@ -329,6 +407,25 @@ func get_process_bandwidth(_ pid: UInt32) -> CBandwidthStats
 @_silgen_name("refresh_network_data")
 func refresh_network_data()
 
+// Disk monitor FFI functions
+@_silgen_name("disk_monitor_init")
+func disk_monitor_init()
+
+@_silgen_name("disk_monitor_refresh")
+func disk_monitor_refresh()
+
+@_silgen_name("get_primary_disk")
+func get_primary_disk() -> UnsafeMutablePointer<CDiskInfo>?
+
+@_silgen_name("get_all_disks")
+func get_all_disks() -> UnsafeMutablePointer<CDiskList>?
+
+@_silgen_name("free_disk_info")
+func free_disk_info(_ info: UnsafeMutablePointer<CDiskInfo>?)
+
+@_silgen_name("free_disk_list")
+func free_disk_list(_ list: UnsafeMutablePointer<CDiskList>?)
+
 // Memory monitor FFI functions
 @_silgen_name("memory_monitor_init")
 func memory_monitor_init()
@@ -360,12 +457,23 @@ func get_memory_pressure() -> UnsafeMutablePointer<CChar>?
 @_silgen_name("free_string")
 func free_string(_ s: UnsafeMutablePointer<CChar>?)
 
-enum CKillResult: Int32 {
+enum CActionResult: Int32 {
     case success = 0
     case processNotFound = 1
     case permissionDenied = 2
     case processUnkillable = 3
-    case unknownError = 4
+    case alreadyInState = 4
+    case unknownError = 5
+}
+
+struct CActionResponse {
+    var result: CActionResult
+    var message: UnsafeMutablePointer<CChar>?
+}
+
+struct CEnvironmentVar {
+    var key: UnsafeMutablePointer<CChar>?
+    var value: UnsafeMutablePointer<CChar>?
 }
 
 struct CProcessInfo {
@@ -404,15 +512,21 @@ struct CCpuMetrics {
 
 struct CProcessDetails {
     var pid: UInt32
-    var executable_path: UnsafeMutablePointer<CChar>?
-    var arguments: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-    var arguments_count: Int
-    var open_files: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var name: UnsafeMutablePointer<CChar>?
+    var exe_path: UnsafeMutablePointer<CChar>?
+    var command_line: UnsafeMutablePointer<CChar>?
+    var working_directory: UnsafeMutablePointer<CChar>?
+    var user_id: UInt32
+    var parent_pid: UInt32
+    var threads_count: Int
     var open_files_count: Int
-    var connections: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-    var connections_count: Int
-    var user: UnsafeMutablePointer<CChar>?
-    var group: UnsafeMutablePointer<CChar>?
+    var cpu_usage: Float
+    var memory_usage: UInt64
+    var virtual_memory: UInt64
+    var start_time: UInt64
+    var state: UnsafeMutablePointer<CChar>?
+    var environment_count: Int
+    var environment_vars: UnsafeMutablePointer<CEnvironmentVar>?
 }
 
 struct CMemoryInfo {
@@ -442,6 +556,23 @@ struct CProcessMemoryInfo {
 
 struct CProcessMemoryList {
     var processes: UnsafeMutablePointer<CProcessMemoryInfo>?
+    var count: Int
+}
+
+struct CDiskInfo {
+    var mount_point: UnsafeMutablePointer<CChar>?
+    var name: UnsafeMutablePointer<CChar>?
+    var file_system: UnsafeMutablePointer<CChar>?
+    var total_bytes: UInt64
+    var available_bytes: UInt64
+    var used_bytes: UInt64
+    var usage_percent: Float
+    var is_removable: UInt8
+    var disk_type: UnsafeMutablePointer<CChar>?
+}
+
+struct CDiskList {
+    var disks: UnsafeMutablePointer<CDiskInfo>?
     var count: Int
 }
 
@@ -596,6 +727,8 @@ class RustBridge: ObservableObject {
     @Published var limitedProcessPids: Set<UInt32> = []  // Quick lookup for limited PIDs
     @Published var hardwareMetrics: HardwareMetrics?
     @Published var networkMetrics: NetworkMetrics?
+    @Published var primaryDisk: DiskMetrics?
+    @Published var allDisks: [DiskMetrics] = []
     
     private var refreshTimer: Timer?
     private let updateQueue = DispatchQueue(label: "com.cpumonitor.update", qos: .userInitiated)
@@ -617,6 +750,7 @@ class RustBridge: ObservableObject {
         memory_monitor_init()
         hardware_monitor_init()
         network_monitor_init()
+        disk_monitor_init()
         setupAppStateObservers()
         startRefreshTimer()
     }
@@ -784,6 +918,7 @@ class RustBridge: ObservableObject {
                     memory_monitor_refresh()
                     hardware_monitor_refresh()
                     refresh_network_data()
+                    disk_monitor_refresh()
                     
                     let newProcesses = self.fetchProcessesSync()
                     let newMetrics = self.fetchCpuMetricsSync()
@@ -794,6 +929,8 @@ class RustBridge: ObservableObject {
                     let newCpuLimits = self.fetchCpuLimitsSync()
                     let newHardwareMetrics = self.fetchHardwareMetricsSync()
                     let newNetworkMetrics = self.fetchNetworkMetricsSync()
+                    let newPrimaryDisk = self.fetchPrimaryDiskSync()
+                    let newAllDisks = self.fetchAllDisksSync()
                     
                     Task { @MainActor in
                         self.processes = newProcesses
@@ -806,6 +943,8 @@ class RustBridge: ObservableObject {
                         self.limitedProcessPids = Set(newCpuLimits.map { $0.pid })
                         self.hardwareMetrics = newHardwareMetrics
                         self.networkMetrics = newNetworkMetrics
+                        self.primaryDisk = newPrimaryDisk
+                        self.allDisks = newAllDisks
                         
                         // Adjust refresh rate based on activity
                         self.adjustRefreshRate()
@@ -926,43 +1065,90 @@ class RustBridge: ObservableObject {
     }
     
     func terminateProcess(_ pid: UInt32) -> (success: Bool, message: String) {
-        let result = terminate_process(pid)
-        switch result {
-        case .success:
-            return (true, "Process terminated successfully")
-        case .processNotFound:
-            return (false, "Process not found")
-        case .permissionDenied:
-            return (false, "Permission denied. Try running with sudo.")
-        case .processUnkillable:
-            return (false, "Process cannot be terminated (kernel process or I/O blocked)")
-        case .unknownError:
-            return (false, "Unknown error occurred")
+        guard let response = terminate_process(pid) else {
+            return (false, "Failed to execute termination")
         }
+        defer { free_action_response(response) }
+        
+        let message = response.pointee.message != nil
+            ? String(cString: response.pointee.message!)
+            : "Unknown response"
+        
+        return (response.pointee.result == .success, message)
     }
     
     func forceKillProcess(_ pid: UInt32) -> (success: Bool, message: String) {
-        let result = force_kill_process(pid)
-        switch result {
-        case .success:
-            return (true, "Process killed successfully")
-        case .processNotFound:
-            return (false, "Process not found")
-        case .permissionDenied:
-            return (false, "Permission denied. Try running with sudo.")
-        case .processUnkillable:
-            return (false, "Process cannot be killed (kernel process)")
-        case .unknownError:
-            return (false, "Unknown error occurred")
+        guard let response = force_kill_process(pid) else {
+            return (false, "Failed to execute kill")
         }
+        defer { free_action_response(response) }
+        
+        let message = response.pointee.message != nil
+            ? String(cString: response.pointee.message!)
+            : "Unknown response"
+        
+        return (response.pointee.result == .success, message)
     }
     
-    func suspendProcess(_ pid: UInt32) -> Bool {
-        return suspend_process(pid)
+    func suspendProcess(_ pid: UInt32) -> (success: Bool, message: String) {
+        guard let response = suspend_process(pid) else {
+            return (false, "Failed to execute suspend")
+        }
+        defer { free_action_response(response) }
+        
+        let message = response.pointee.message != nil
+            ? String(cString: response.pointee.message!)
+            : "Unknown response"
+        
+        return (response.pointee.result == .success, message)
     }
     
-    func resumeProcess(_ pid: UInt32) -> Bool {
-        return resume_process(pid)
+    func resumeProcess(_ pid: UInt32) -> (success: Bool, message: String) {
+        guard let response = resume_process(pid) else {
+            return (false, "Failed to execute resume")
+        }
+        defer { free_action_response(response) }
+        
+        let message = response.pointee.message != nil
+            ? String(cString: response.pointee.message!)
+            : "Unknown response"
+        
+        return (response.pointee.result == .success, message)
+    }
+    
+    func getProcessDetails(_ pid: UInt32) async -> ProcessDetailsInfo? {
+        guard let detailsPtr = get_process_details(pid) else { return nil }
+        defer { free_process_details(detailsPtr) }
+        
+        let details = detailsPtr.pointee
+        
+        // Convert fields - some may be empty due to ProcessDetails limitations
+        let path = details.exe_path != nil ? String(cString: details.exe_path!) : "Unknown"
+        let commandLine = details.command_line != nil ? String(cString: details.command_line!) : ""
+        let arguments = commandLine.isEmpty ? [] : commandLine.components(separatedBy: " ")
+        
+        // Open files count is available but not the list
+        var openFiles: [String] = []
+        if details.open_files_count > 0 {
+            openFiles.append("\(details.open_files_count) files open")
+        }
+        
+        // No connection info in simplified ProcessDetails
+        let connections: [String] = []
+        
+        // User/group info not available in simplified version
+        let user = "N/A"
+        let group = "N/A"
+        
+        return ProcessDetailsInfo(
+            pid: details.pid,
+            executablePath: path,
+            arguments: arguments,
+            openFiles: openFiles,
+            connections: connections,
+            user: user,
+            group: group
+        )
     }
     
     nonisolated private func fetchMemoryMetricsSync() -> MemoryMetrics? {
@@ -1114,6 +1300,67 @@ class RustBridge: ObservableObject {
         )
     }
     
+    nonisolated private func fetchPrimaryDiskSync() -> DiskMetrics? {
+        guard let diskPtr = get_primary_disk() else { return nil }
+        defer { free_disk_info(diskPtr) }
+        
+        let cDisk = diskPtr.pointee
+        
+        let mountPoint = safeStringFromCString(cDisk.mount_point)
+        let name = safeStringFromCString(cDisk.name)
+        let fileSystem = safeStringFromCString(cDisk.file_system)
+        let diskType = safeStringFromCString(cDisk.disk_type)
+        
+        return DiskMetrics(
+            id: mountPoint,
+            mountPoint: mountPoint,
+            name: name,
+            fileSystem: fileSystem,
+            totalBytes: cDisk.total_bytes,
+            availableBytes: cDisk.available_bytes,
+            usedBytes: cDisk.used_bytes,
+            usagePercent: cDisk.usage_percent,
+            isRemovable: cDisk.is_removable != 0,
+            diskType: diskType
+        )
+    }
+    
+    nonisolated private func fetchAllDisksSync() -> [DiskMetrics] {
+        guard let listPtr = get_all_disks() else { return [] }
+        defer { free_disk_list(listPtr) }
+        
+        let list = listPtr.pointee
+        var disks: [DiskMetrics] = []
+        
+        guard let disksPtr = list.disks, list.count > 0 else { return disks }
+        
+        for i in 0..<list.count {
+            let cDisk = disksPtr[i]
+            
+            let mountPoint = safeStringFromCString(cDisk.mount_point)
+            let name = safeStringFromCString(cDisk.name)
+            let fileSystem = safeStringFromCString(cDisk.file_system)
+            let diskType = safeStringFromCString(cDisk.disk_type)
+            
+            let disk = DiskMetrics(
+                id: mountPoint,
+                mountPoint: mountPoint,
+                name: name,
+                fileSystem: fileSystem,
+                totalBytes: cDisk.total_bytes,
+                availableBytes: cDisk.available_bytes,
+                usedBytes: cDisk.used_bytes,
+                usagePercent: cDisk.usage_percent,
+                isRemovable: cDisk.is_removable != 0,
+                diskType: diskType
+            )
+            
+            disks.append(disk)
+        }
+        
+        return disks
+    }
+    
     nonisolated private func fetchNetworkMetricsSync() -> NetworkMetrics? {
         guard let metricsPtr = get_network_metrics() else { return nil }
         defer { free_network_metrics(metricsPtr) }
@@ -1205,57 +1452,78 @@ class RustBridge: ObservableObject {
         return cpuLimits
     }
     
-    func getProcessDetails(_ pid: UInt32) async -> ProcessDetailsInfo? {
-        guard let detailsPtr = get_process_details(pid) else { return nil }
-        defer { free_process_details(detailsPtr) }
+    
+    // MARK: - Process Tree Methods
+    
+    func fetchProcessTree(completion: @escaping ([ProcessTreeNode]) -> Void) async {
+        let roots = await Task.detached { () -> [ProcessTreeNode] in
+            guard let treePtr = get_process_tree() else {
+                return []
+            }
+            
+            defer { free_process_tree(treePtr) }
+            
+            let cTree = treePtr.assumingMemoryBound(to: CProcessTree.self).pointee
+            
+            var roots: [ProcessTreeNode] = []
+            
+            if let rootsPtr = cTree.roots {
+                for i in 0..<cTree.roots_count {
+                    let cNode = rootsPtr[i]
+                    if let node = await Self.convertTreeNode(cNode) {
+                        roots.append(node)
+                    }
+                }
+            }
+            
+            return roots
+        }.value
         
-        let details = detailsPtr.pointee
+        await MainActor.run {
+            completion(roots)
+        }
+    }
+    
+    private static func convertTreeNode(_ cNode: CProcessTreeNode) -> ProcessTreeNode? {
+        let name = cNode.name.map { String(cString: $0) } ?? "Unknown"
+        let status = cNode.status.map { String(cString: $0) } ?? "Unknown"
+        let executablePath = cNode.executable_path.map { String(cString: $0) } ?? ""
         
-        // Convert executable path
-        let path = safeStringFromCString(details.executable_path)
-        
-        // Convert arguments
-        var arguments: [String] = []
-        if let argsPtr = details.arguments, details.arguments_count > 0 {
-            for i in 0..<details.arguments_count {
-                if let argPtr = argsPtr[i], Int(bitPattern: argPtr) != 0 {
-                    arguments.append(String(cString: argPtr))
+        // Convert command array
+        var command: [String] = []
+        if let cmdPtr = cNode.command {
+            for i in 0..<cNode.command_count {
+                if let argPtr = cmdPtr[i] {
+                    command.append(String(cString: argPtr))
                 }
             }
         }
         
-        // Convert open files
-        var openFiles: [String] = []
-        if let filesPtr = details.open_files, details.open_files_count > 0 {
-            for i in 0..<details.open_files_count {
-                if let filePtr = filesPtr[i], Int(bitPattern: filePtr) != 0 {
-                    openFiles.append(String(cString: filePtr))
+        // Convert children recursively
+        var children: [ProcessTreeNode] = []
+        if let childrenPtr = cNode.children {
+            for i in 0..<cNode.children_count {
+                let childCNode = childrenPtr[i]
+                if let childNode = convertTreeNode(childCNode) {
+                    children.append(childNode)
                 }
             }
         }
         
-        // Convert connections
-        var connections: [String] = []
-        if let connsPtr = details.connections, details.connections_count > 0 {
-            for i in 0..<details.connections_count {
-                if let connPtr = connsPtr[i], Int(bitPattern: connPtr) != 0 {
-                    connections.append(String(cString: connPtr))
-                }
-            }
-        }
-        
-        // Convert user and group
-        let user = safeStringFromCString(details.user)
-        let group = safeStringFromCString(details.group)
-        
-        return ProcessDetailsInfo(
-            pid: details.pid,
-            executablePath: path,
-            arguments: arguments,
-            openFiles: openFiles,
-            connections: connections,
-            user: user,
-            group: group
+        return ProcessTreeNode(
+            id: cNode.pid,
+            pid: cNode.pid,
+            name: name,
+            command: command,
+            executablePath: executablePath,
+            cpuUsage: cNode.cpu_usage,
+            memoryMB: cNode.memory_mb,
+            status: status,
+            threadCount: cNode.thread_count,
+            children: children,
+            totalCpuUsage: cNode.total_cpu_usage,
+            totalMemoryMB: cNode.total_memory_mb,
+            descendantCount: cNode.descendant_count
         )
     }
 }

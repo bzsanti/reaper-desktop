@@ -9,8 +9,8 @@ struct ContentView: View {
     @EnvironmentObject var appState: AppState
     
     // Version info
-    private let appVersion = "0.3.1"  // CPU Limits visibility added
-    private let buildVersion = "20250817233446"  // Unique build timestamp
+    private let appVersion = "0.4.6"  // Advanced CPU Analysis - Phase 2 complete
+    private let buildVersion = "20250821144500"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -20,16 +20,24 @@ struct ContentView: View {
                 headerView
                 
                 TabView(selection: $selectedTab) {
-                    ProcessListView(
-                        rustBridge: rustBridge,
-                        searchText: $appState.searchText,
-                        selectedProcess: $selectedProcess,
-                        showingDetails: $showingDetails
-                    )
-                    .tabItem {
-                        Label("All Processes", systemImage: "list.bullet")
+                    if #available(macOS 14.4, *) {
+                        ProcessListView(
+                            rustBridge: rustBridge,
+                            searchText: $appState.searchText,
+                            selectedProcess: $selectedProcess,
+                            showingDetails: $showingDetails
+                        )
+                        .tabItem {
+                            Label("All Processes", systemImage: "list.bullet")
+                        }
+                        .tag(0)
+                    } else {
+                        Text("This feature requires macOS 14.4 or later")
+                            .tabItem {
+                                Label("All Processes", systemImage: "list.bullet")
+                            }
+                            .tag(0)
                     }
-                    .tag(0)
                     
                     HighCpuView(rustBridge: rustBridge)
                         .tabItem {
@@ -120,8 +128,8 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                if let metrics = rustBridge.cpuMetrics {
-                    HStack(spacing: 20) {
+                HStack(spacing: 20) {
+                    if let metrics = rustBridge.cpuMetrics {
                         MetricBadge(
                             label: "CPU",
                             value: String(format: "%.1f%%", metrics.totalUsage),
@@ -138,6 +146,14 @@ struct ContentView: View {
                             label: "Cores",
                             value: "\(metrics.coreCount)",
                             color: .purple
+                        )
+                    }
+                    
+                    if let disk = rustBridge.primaryDisk {
+                        MetricBadge(
+                            label: "Disk",
+                            value: disk.formatBytes(disk.availableBytes),
+                            color: colorForDiskUsage(disk.usagePercent)
                         )
                     }
                 }
@@ -195,6 +211,17 @@ struct ContentView: View {
         case 0..<50:
             return .green
         case 50..<75:
+            return .orange
+        default:
+            return .red
+        }
+    }
+    
+    func colorForDiskUsage(_ usagePercent: Float) -> Color {
+        switch usagePercent {
+        case 0..<70:
+            return .green
+        case 70..<90:
             return .orange
         default:
             return .red

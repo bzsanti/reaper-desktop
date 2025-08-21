@@ -106,20 +106,20 @@ struct ReaperCommands: Commands {
               let bridge = rustBridge,
               let notifications = notificationManager else { return }
         
-        let success = bridge.suspendProcess(process.pid)
+        let result = bridge.suspendProcess(process.pid)
         
-        if success {
+        if result.success {
             notifications.show(
                 .success,
                 title: "Process Suspended",
-                message: "\(process.name) (PID: \(process.pid)) was suspended"
+                message: result.message
             )
             bridge.refresh()
         } else {
             notifications.show(
                 .error,
                 title: "Failed to Suspend",
-                message: "Could not suspend \(process.name)"
+                message: result.message
             )
         }
     }
@@ -129,20 +129,20 @@ struct ReaperCommands: Commands {
               let bridge = rustBridge,
               let notifications = notificationManager else { return }
         
-        let success = bridge.resumeProcess(process.pid)
+        let result = bridge.resumeProcess(process.pid)
         
-        if success {
+        if result.success {
             notifications.show(
                 .success,
                 title: "Process Resumed",
-                message: "\(process.name) (PID: \(process.pid)) was resumed"
+                message: result.message
             )
             bridge.refresh()
         } else {
             notifications.show(
                 .error,
                 title: "Failed to Resume",
-                message: "Could not resume \(process.name)"
+                message: result.message
             )
         }
     }
@@ -203,37 +203,6 @@ struct ReaperCommands: Commands {
         } else {
             return String(format: "%02d:%02d", minutes, secs)
         }
-    }
-}
-
-// MARK: - Focused Values
-
-struct SelectedProcessKey: FocusedValueKey {
-    typealias Value = ProcessInfo
-}
-
-struct RustBridgeKey: FocusedValueKey {
-    typealias Value = RustBridge
-}
-
-struct NotificationManagerKey: FocusedValueKey {
-    typealias Value = NotificationManager
-}
-
-extension FocusedValues {
-    var selectedProcess: ProcessInfo? {
-        get { self[SelectedProcessKey.self] }
-        set { self[SelectedProcessKey.self] = newValue }
-    }
-    
-    var rustBridge: RustBridge? {
-        get { self[RustBridgeKey.self] }
-        set { self[RustBridgeKey.self] = newValue }
-    }
-    
-    var notificationManager: NotificationManager? {
-        get { self[NotificationManagerKey.self] }
-        set { self[NotificationManagerKey.self] = newValue }
     }
 }
 

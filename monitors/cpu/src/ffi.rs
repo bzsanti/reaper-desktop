@@ -1,4 +1,4 @@
-use crate::{CpuAnalyzer, ProcessMonitor, KernelInterface, KillResult, ProcessDetails};
+use crate::{CpuAnalyzer, ProcessMonitor, KernelInterface, ProcessAction, ActionResult, ProcessDetails, ProcessTreeBuilder, ProcessTreeNode};
 use once_cell::sync::Lazy;
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -10,6 +10,10 @@ static PROCESS_MONITOR: Lazy<Mutex<ProcessMonitor>> = Lazy::new(|| {
 
 static CPU_ANALYZER: Lazy<Mutex<CpuAnalyzer>> = Lazy::new(|| {
     Mutex::new(CpuAnalyzer::new())
+});
+
+static KERNEL_INTERFACE: Lazy<Mutex<KernelInterface>> = Lazy::new(|| {
+    Mutex::new(KernelInterface::new())
 });
 
 #[repr(C)]
@@ -255,48 +259,208 @@ pub extern "C" fn free_string(s: *mut c_char) {
 }
 
 #[repr(C)]
-pub enum CKillResult {
+pub enum CActionResult {
     Success = 0,
     ProcessNotFound = 1,
     PermissionDenied = 2,
     ProcessUnkillable = 3,
-    UnknownError = 4,
+    AlreadyInState = 4,
+    UnknownError = 5,
+}
+
+#[repr(C)]
+pub struct CActionResponse {
+    pub result: CActionResult,
+    pub message: *mut c_char,
+}
+
+#[repr(C)]
+pub struct CProcessDetails {
+    pub pid: u32,
+    pub name: *mut c_char,
+    pub exe_path: *mut c_char,
+    pub command_line: *mut c_char,
+    pub working_directory: *mut c_char,
+    pub user_id: u32,
+    pub parent_pid: u32,
+    pub threads_count: usize,
+    pub open_files_count: usize,
+    pub cpu_usage: f32,
+    pub memory_usage: u64,
+    pub virtual_memory: u64,
+    pub start_time: u64,
+    pub state: *mut c_char,
+    pub environment_count: usize,
+    pub environment_vars: *mut CEnvironmentVar,
+}
+
+#[repr(C)]
+pub struct CEnvironmentVar {
+    pub key: *mut c_char,
+    pub value: *mut c_char,
 }
 
 #[no_mangle]
-pub extern "C" fn terminate_process(pid: u32) -> CKillResult {
-    let kernel = KernelInterface::new();
-    match kernel.terminate_process(pid) {
-        KillResult::Success => CKillResult::Success,
-        KillResult::ProcessNotFound => CKillResult::ProcessNotFound,
-        KillResult::PermissionDenied => CKillResult::PermissionDenied,
-        KillResult::ProcessUnkillable(_) => CKillResult::ProcessUnkillable,
-        KillResult::UnknownError(_) => CKillResult::UnknownError,
+pub extern "C" fn terminate_process(pid: u32) -> *mut CActionResponse {
+    execute_process_action(pid, ProcessAction::Terminate)
+}
+
+#[no_mangle]
+pub extern "C" fn force_kill_process(pid: u32) -> *mut CActionResponse {
+    execute_process_action(pid, ProcessAction::Kill)
+}
+
+#[no_mangle]
+pub extern "C" fn suspend_process(pid: u32) -> *mut CActionResponse {
+    execute_process_action(pid, ProcessAction::Suspend)
+}
+
+#[no_mangle]
+pub extern "C" fn resume_process(pid: u32) -> *mut CActionResponse {
+    execute_process_action(pid, ProcessAction::Resume)
+}
+
+fn execute_process_action(pid: u32, action: ProcessAction) -> *mut CActionResponse {
+    let result = match KERNEL_INTERFACE.lock() {
+        Ok(mut kernel) => kernel.execute_action(pid, action),
+        Err(_) => ActionResult::UnknownError("Failed to acquire kernel interface lock".to_string()),
+    };
+    
+    let (c_result, message) = match result {
+        ActionResult::Success(msg) => (CActionResult::Success, msg),
+        ActionResult::ProcessNotFound => (CActionResult::ProcessNotFound, "Process not found".to_string()),
+        ActionResult::PermissionDenied(msg) => (CActionResult::PermissionDenied, msg),
+        ActionResult::ProcessUnkillable(msg) => (CActionResult::ProcessUnkillable, msg),
+        ActionResult::AlreadyInState(msg) => (CActionResult::AlreadyInState, msg),
+        ActionResult::UnknownError(msg) => (CActionResult::UnknownError, msg),
+    };
+    
+    let c_message = CString::new(message).unwrap_or_else(|_| CString::new("Error").unwrap());
+    
+    Box::into_raw(Box::new(CActionResponse {
+        result: c_result,
+        message: c_message.into_raw(),
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn get_process_details(pid: u32) -> *mut CProcessDetails {
+    let details = match ProcessDetails::new(pid) {
+        Some(d) => d,
+        None => return std::ptr::null_mut(),
+    };
+    
+    // Convert command line vector to single string
+    let command_line = details.arguments.join(" ");
+    
+    // Convert environment variables
+    let env_count = details.environment.len();
+    let mut env_vars = Vec::with_capacity(env_count);
+    
+    for (key, value) in details.environment.iter() {
+        let c_key = CString::new(key.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
+        let c_value = CString::new(value.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
+        
+        env_vars.push(CEnvironmentVar {
+            key: c_key.into_raw(),
+            value: c_value.into_raw(),
+        });
+    }
+    
+    // Get process name from executable path
+    let name = details.executable_path.split('/').last().unwrap_or("Unknown").to_string();
+    
+    let c_name = CString::new(name.as_str()).unwrap_or_else(|_| CString::new("Unknown").unwrap());
+    let c_exe_path = CString::new(details.executable_path.as_str()).unwrap_or_else(|_| CString::new("Unknown").unwrap());
+    let c_command_line = CString::new(command_line.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
+    let c_working_dir = CString::new("Unknown").unwrap(); // ProcessDetails doesn't have working_directory
+    let c_state = CString::new("Unknown").unwrap(); // ProcessDetails doesn't have state
+    
+    let env_ptr = if env_vars.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let boxed_slice = env_vars.into_boxed_slice();
+        Box::into_raw(boxed_slice) as *mut CEnvironmentVar
+    };
+    
+    Box::into_raw(Box::new(CProcessDetails {
+        pid: details.pid,
+        name: c_name.into_raw(),
+        exe_path: c_exe_path.into_raw(),
+        command_line: c_command_line.into_raw(),
+        working_directory: c_working_dir.into_raw(),
+        user_id: 0, // ProcessDetails doesn't have user_id
+        parent_pid: 0, // ProcessDetails doesn't have parent_pid
+        threads_count: 0, // ProcessDetails doesn't have threads_count
+        open_files_count: details.open_files.len(),
+        cpu_usage: 0.0, // ProcessDetails doesn't have cpu_usage
+        memory_usage: 0, // ProcessDetails doesn't have memory_usage
+        virtual_memory: 0, // ProcessDetails doesn't have virtual_memory
+        start_time: 0, // ProcessDetails doesn't have start_time
+        state: c_state.into_raw(),
+        environment_count: env_count,
+        environment_vars: env_ptr,
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn free_action_response(response: *mut CActionResponse) {
+    if !response.is_null() {
+        unsafe {
+            let response = Box::from_raw(response);
+            if !response.message.is_null() {
+                let _ = CString::from_raw(response.message);
+            }
+        }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn force_kill_process(pid: u32) -> CKillResult {
-    let kernel = KernelInterface::new();
-    match kernel.force_kill_process(pid) {
-        KillResult::Success => CKillResult::Success,
-        KillResult::ProcessNotFound => CKillResult::ProcessNotFound,
-        KillResult::PermissionDenied => CKillResult::PermissionDenied,
-        KillResult::ProcessUnkillable(_) => CKillResult::ProcessUnkillable,
-        KillResult::UnknownError(_) => CKillResult::UnknownError,
+pub extern "C" fn free_process_details(details: *mut CProcessDetails) {
+    if !details.is_null() {
+        unsafe {
+            let details = Box::from_raw(details);
+            
+            // Free all string fields
+            if !details.name.is_null() {
+                let _ = CString::from_raw(details.name);
+            }
+            if !details.exe_path.is_null() {
+                let _ = CString::from_raw(details.exe_path);
+            }
+            if !details.command_line.is_null() {
+                let _ = CString::from_raw(details.command_line);
+            }
+            if !details.working_directory.is_null() {
+                let _ = CString::from_raw(details.working_directory);
+            }
+            if !details.state.is_null() {
+                let _ = CString::from_raw(details.state);
+            }
+            
+            // Free environment variables
+            if !details.environment_vars.is_null() && details.environment_count > 0 {
+                let env_slice = std::slice::from_raw_parts_mut(
+                    details.environment_vars,
+                    details.environment_count
+                );
+                
+                for env_var in env_slice.iter() {
+                    if !env_var.key.is_null() {
+                        let _ = CString::from_raw(env_var.key);
+                    }
+                    if !env_var.value.is_null() {
+                        let _ = CString::from_raw(env_var.value);
+                    }
+                }
+                
+                let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                    details.environment_vars,
+                    details.environment_count
+                ));
+            }
+        }
     }
-}
-
-#[no_mangle]
-pub extern "C" fn suspend_process(pid: u32) -> bool {
-    let kernel = KernelInterface::new();
-    kernel.suspend_process(pid)
-}
-
-#[no_mangle]
-pub extern "C" fn resume_process(pid: u32) -> bool {
-    let kernel = KernelInterface::new();
-    kernel.resume_process(pid)
 }
 
 #[no_mangle]
@@ -318,128 +482,166 @@ pub extern "C" fn monitor_cleanup() {
     // This is here for explicit cleanup if needed
 }
 
-// Process Details FFI
 
+
+// Process Tree FFI structures
 #[repr(C)]
-pub struct CProcessDetails {
+pub struct CProcessTreeNode {
     pub pid: u32,
+    pub name: *mut c_char,
+    pub command: *mut *mut c_char,  // Array of strings
+    pub command_count: usize,
     pub executable_path: *mut c_char,
-    pub arguments: *mut *mut c_char,
-    pub arguments_count: usize,
-    pub open_files: *mut *mut c_char,
-    pub open_files_count: usize,
-    pub connections: *mut *mut c_char,
-    pub connections_count: usize,
-    pub user: *mut c_char,
-    pub group: *mut c_char,
+    pub cpu_usage: f32,
+    pub memory_mb: f64,
+    pub status: *mut c_char,
+    pub thread_count: usize,
+    pub children: *mut CProcessTreeNode,
+    pub children_count: usize,
+    pub total_cpu_usage: f32,
+    pub total_memory_mb: f64,
+    pub descendant_count: usize,
 }
 
-#[no_mangle]
-pub extern "C" fn get_process_details(pid: u32) -> *mut CProcessDetails {
-    let details = match ProcessDetails::new(pid) {
-        Some(d) => d,
-        None => return std::ptr::null_mut(),
-    };
+#[repr(C)]
+pub struct CProcessTree {
+    pub roots: *mut CProcessTreeNode,
+    pub roots_count: usize,
+    pub total_processes: usize,
+}
+
+// Helper function to convert ProcessTreeNode to CProcessTreeNode
+fn convert_tree_node(node: ProcessTreeNode) -> CProcessTreeNode {
+    let name = CString::new(node.name).unwrap_or_default();
+    let executable_path = CString::new(node.executable_path).unwrap_or_default();
+    let status = CString::new(node.status).unwrap_or_default();
     
-    // Convert executable path
-    let path = CString::new(details.executable_path).unwrap_or_default();
-    
-    // Convert arguments to C strings
-    let mut c_args: Vec<*mut c_char> = details.arguments
+    // Convert command arguments
+    let mut c_command: Vec<*mut c_char> = node.command
         .into_iter()
         .map(|arg| CString::new(arg).unwrap_or_default().into_raw())
         .collect();
     
-    // Convert open files to C strings  
-    let mut c_files: Vec<*mut c_char> = details.open_files
+    // Convert children recursively
+    let mut c_children: Vec<CProcessTreeNode> = node.children
         .into_iter()
-        .map(|file| CString::new(file).unwrap_or_default().into_raw())
+        .map(convert_tree_node)
         .collect();
     
-    // Convert connections to C strings
-    let mut c_connections: Vec<*mut c_char> = details.connections
-        .into_iter()
-        .map(|conn| CString::new(conn).unwrap_or_default().into_raw())
-        .collect();
-    
-    // Convert user and group
-    let user = CString::new(details.user).unwrap_or_default();
-    let group = CString::new(details.group).unwrap_or_default();
-    
-    let result = Box::new(CProcessDetails {
-        pid: details.pid,
-        executable_path: path.into_raw(),
-        arguments: c_args.as_mut_ptr(),
-        arguments_count: c_args.len(),
-        open_files: c_files.as_mut_ptr(),
-        open_files_count: c_files.len(),
-        connections: c_connections.as_mut_ptr(),
-        connections_count: c_connections.len(),
-        user: user.into_raw(),
-        group: group.into_raw(),
-    });
+    let result = CProcessTreeNode {
+        pid: node.pid,
+        name: name.into_raw(),
+        command: c_command.as_mut_ptr(),
+        command_count: c_command.len(),
+        executable_path: executable_path.into_raw(),
+        cpu_usage: node.cpu_usage,
+        memory_mb: node.memory_mb,
+        status: status.into_raw(),
+        thread_count: node.thread_count,
+        children: if c_children.is_empty() { 
+            std::ptr::null_mut() 
+        } else { 
+            c_children.as_mut_ptr() 
+        },
+        children_count: c_children.len(),
+        total_cpu_usage: node.total_cpu_usage,
+        total_memory_mb: node.total_memory_mb,
+        descendant_count: node.descendant_count,
+    };
     
     // Prevent vectors from being deallocated
-    std::mem::forget(c_args);
-    std::mem::forget(c_files);
-    std::mem::forget(c_connections);
+    std::mem::forget(c_command);
+    std::mem::forget(c_children);
+    
+    result
+}
+
+#[no_mangle]
+pub extern "C" fn get_process_tree() -> *mut CProcessTree {
+    let mut builder = ProcessTreeBuilder::new();
+    let tree = builder.build_tree();
+    
+    // Convert roots to C structures
+    let mut c_roots: Vec<CProcessTreeNode> = tree.roots
+        .into_iter()
+        .map(convert_tree_node)
+        .collect();
+    
+    let result = Box::new(CProcessTree {
+        roots: if c_roots.is_empty() { 
+            std::ptr::null_mut() 
+        } else { 
+            c_roots.as_mut_ptr() 
+        },
+        roots_count: c_roots.len(),
+        total_processes: tree.total_processes,
+    });
+    
+    // Prevent vector from being deallocated
+    std::mem::forget(c_roots);
     
     Box::into_raw(result)
 }
 
 #[no_mangle]
-pub extern "C" fn free_process_details(details: *mut CProcessDetails) {
-    if details.is_null() {
+pub extern "C" fn free_process_tree_node(node: *mut CProcessTreeNode) {
+    if node.is_null() {
         return;
     }
     
     unsafe {
-        let details = Box::from_raw(details);
+        let node = &mut *node;
+        
+        // Free name
+        if !node.name.is_null() {
+            let _ = CString::from_raw(node.name);
+        }
         
         // Free executable path
-        if !details.executable_path.is_null() {
-            let _ = CString::from_raw(details.executable_path);
+        if !node.executable_path.is_null() {
+            let _ = CString::from_raw(node.executable_path);
         }
         
-        // Free arguments
-        if !details.arguments.is_null() && details.arguments_count > 0 {
-            let args = std::slice::from_raw_parts_mut(details.arguments, details.arguments_count);
-            for arg in args {
-                if !arg.is_null() {
-                    let _ = CString::from_raw(*arg);
+        // Free status
+        if !node.status.is_null() {
+            let _ = CString::from_raw(node.status);
+        }
+        
+        // Free command arguments
+        if !node.command.is_null() {
+            let commands = Vec::from_raw_parts(node.command, node.command_count, node.command_count);
+            for cmd in commands {
+                if !cmd.is_null() {
+                    let _ = CString::from_raw(cmd);
                 }
             }
-            let _ = Vec::from_raw_parts(details.arguments, details.arguments_count, details.arguments_count);
         }
         
-        // Free open files
-        if !details.open_files.is_null() && details.open_files_count > 0 {
-            let files = std::slice::from_raw_parts_mut(details.open_files, details.open_files_count);
-            for file in files {
-                if !file.is_null() {
-                    let _ = CString::from_raw(*file);
-                }
+        // Free children recursively
+        if !node.children.is_null() {
+            let children = Vec::from_raw_parts(node.children, node.children_count, node.children_count);
+            for mut child in children {
+                free_process_tree_node(&mut child as *mut CProcessTreeNode);
             }
-            let _ = Vec::from_raw_parts(details.open_files, details.open_files_count, details.open_files_count);
         }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_process_tree(tree: *mut CProcessTree) {
+    if tree.is_null() {
+        return;
+    }
+    
+    unsafe {
+        let tree = Box::from_raw(tree);
         
-        // Free connections
-        if !details.connections.is_null() && details.connections_count > 0 {
-            let conns = std::slice::from_raw_parts_mut(details.connections, details.connections_count);
-            for conn in conns {
-                if !conn.is_null() {
-                    let _ = CString::from_raw(*conn);
-                }
+        // Free all root nodes
+        if !tree.roots.is_null() {
+            let roots = Vec::from_raw_parts(tree.roots, tree.roots_count, tree.roots_count);
+            for mut root in roots {
+                free_process_tree_node(&mut root as *mut CProcessTreeNode);
             }
-            let _ = Vec::from_raw_parts(details.connections, details.connections_count, details.connections_count);
-        }
-        
-        // Free user and group
-        if !details.user.is_null() {
-            let _ = CString::from_raw(details.user);
-        }
-        if !details.group.is_null() {
-            let _ = CString::from_raw(details.group);
         }
     }
 }

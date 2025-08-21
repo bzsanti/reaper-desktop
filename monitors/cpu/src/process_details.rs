@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::process::Command;
-use std::path::PathBuf;
-use std::ffi::CStr;
 use libc::{proc_pidpath, PROC_PIDPATHINFO_MAXSIZE};
 
 #[derive(Debug, Clone)]

@@ -2,100 +2,117 @@
 
 set -e
 
-echo "🔨 Building Reaper Menu Bar..."
-echo "================================"
-
-# Colors for output
-RED='\033[0;31m'
+# Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Change to script directory
-cd "$(dirname "$0")"
+echo -e "${YELLOW}Building ReaperMenuBar.app...${NC}"
 
-# Step 1: Build Rust libraries
-echo -e "${YELLOW}📦 Building Rust backend...${NC}"
+# Build Rust libraries first (needed for FFI)
+echo -e "${BLUE}Building Rust libraries...${NC}"
 cargo build --release
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Rust build successful${NC}"
-else
-    echo -e "${RED}❌ Rust build failed${NC}"
+
+# Verify Rust libraries exist
+if [ ! -f "target/release/libreaper_cpu_monitor.dylib" ]; then
+    echo -e "${RED}Error: libreaper_cpu_monitor.dylib not found${NC}"
     exit 1
 fi
 
-# Step 2: Build Swift Menu Bar app
-echo -e "${YELLOW}🔧 Building Swift Menu Bar app...${NC}"
+if [ ! -f "target/release/libreaper_disk_monitor.dylib" ]; then
+    echo -e "${RED}Error: libreaper_disk_monitor.dylib not found${NC}"
+    exit 1
+fi
+
+# Navigate to ReaperMenuBar directory
 cd ReaperMenuBar
-swift build -c release
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Swift build successful${NC}"
-else
-    echo -e "${RED}❌ Swift build failed${NC}"
-    exit 1
-fi
 
-# Step 3: Create app bundle
-echo -e "${YELLOW}📁 Creating app bundle...${NC}"
-APP_NAME="ReaperMenuBar"
-APP_BUNDLE="$APP_NAME.app"
-BUILD_DIR="../$APP_BUNDLE"
+# Build the menu bar app
+echo -e "${BLUE}Building ReaperMenuBar...${NC}"
+swift build -c release \
+    -Xlinker -L../target/release \
+    -Xlinker -lreaper_cpu_monitor \
+    -Xlinker -lreaper_disk_monitor \
+    -Xlinker -rpath \
+    -Xlinker @executable_path/../Frameworks
 
-# Remove old bundle if it exists
-rm -rf "$BUILD_DIR"
-
-# Create bundle structure
-mkdir -p "$BUILD_DIR/Contents/MacOS"
-mkdir -p "$BUILD_DIR/Contents/Resources"
+# Create app bundle
+echo -e "${BLUE}Creating app bundle...${NC}"
+APP_BUNDLE="ReaperMenuBar.app"
+rm -rf "$APP_BUNDLE"
+mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/Resources"
+mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
 # Copy executable
-cp .build/release/ReaperMenuBar "$BUILD_DIR/Contents/MacOS/"
+cp .build/release/ReaperMenuBar "$APP_BUNDLE/Contents/MacOS/"
 
 # Copy Info.plist
-cp Info.plist "$BUILD_DIR/Contents/Info.plist"
-
-# Create a simple icon (you can replace this with a real icon later)
-echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\">
+if [ -f "Info.plist" ]; then
+    cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
+else
+    # Create minimal Info.plist
+    cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
+    <key>CFBundleDisplayName</key>
+    <string>Reaper Monitor</string>
+    <key>CFBundleExecutable</key>
+    <string>ReaperMenuBar</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.reaper.menubar</string>
+    <key>CFBundleName</key>
+    <string>ReaperMenuBar</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.4.1</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
 </dict>
-</plist>" > "$BUILD_DIR/Contents/Resources/Info.plist"
+</plist>
+PLIST
+fi
 
-# Sign the app (optional, but recommended)
+# Copy Rust libraries
+echo -e "${BLUE}Copying libraries...${NC}"
+cp ../target/release/libreaper_cpu_monitor.dylib "$APP_BUNDLE/Contents/Frameworks/"
+cp ../target/release/libreaper_disk_monitor.dylib "$APP_BUNDLE/Contents/Frameworks/"
+
+# Update library paths
+echo -e "${BLUE}Updating library paths...${NC}"
+# Fix the library paths to use @rpath instead of absolute paths
+install_name_tool -change \
+    /Users/santifdezmunoz/Documents/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_cpu_monitor.dylib \
+    @rpath/libreaper_cpu_monitor.dylib \
+    "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar"
+    
+install_name_tool -change \
+    /Users/santifdezmunoz/Documents/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_disk_monitor.dylib \
+    @rpath/libreaper_disk_monitor.dylib \
+    "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar"
+
+# Add rpath if not already present
+install_name_tool -add_rpath @executable_path/../Frameworks "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar" 2>/dev/null || true
+
+# Sign the app
 if command -v codesign &> /dev/null; then
-    echo -e "${YELLOW}🔐 Signing app...${NC}"
-    codesign --force --deep --sign - "$BUILD_DIR"
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ App signed${NC}"
-    else
-        echo -e "${YELLOW}⚠️  App signing failed (continuing anyway)${NC}"
-    fi
+    echo -e "${BLUE}Signing app...${NC}"
+    codesign --force --deep --sign - "$APP_BUNDLE"
 fi
 
-echo -e "${GREEN}🎉 Build complete!${NC}"
+echo -e "${GREEN}✓ ReaperMenuBar.app created successfully!${NC}"
+echo -e "${GREEN}Location: ReaperMenuBar/$APP_BUNDLE${NC}"
 echo ""
-echo "📍 App bundle created at: $(pwd)/$BUILD_DIR"
+echo "To install as a login item:"
+echo "1. Open System Preferences > Users & Groups"
+echo "2. Select your user and click 'Login Items'"
+echo "3. Click '+' and add ReaperMenuBar.app"
 echo ""
-echo "To run the menu bar app:"
-echo "  open $BUILD_DIR"
-echo ""
-echo "To install (copy to Applications):"
-echo "  cp -r $BUILD_DIR /Applications/"
-echo ""
-echo "To check CPU usage:"
-echo "  ps aux | grep ReaperMenuBar"
-
-# Return to original directory
-cd ..
-
-# Optional: Launch the app
-read -p "Launch ReaperMenuBar now? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    open "ReaperMenuBar.app"
-    echo -e "${GREEN}✅ ReaperMenuBar launched!${NC}"
-    echo "Check your menu bar for the CPU monitor."
-fi
+echo "To run now: open $APP_BUNDLE"

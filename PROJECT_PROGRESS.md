@@ -1,8 +1,26 @@
-# Progreso del Proyecto - 2025-08-17 23:52:33
+# Progreso del Proyecto - 2025-08-20 13:52:00
 
-## 🎯 Sesión Actual: Implementación de Network Monitor
+## 🎯 Sesión Actual: Fase 1.2 - Mejoras de Tabla Completadas
 
-### ✅ Funcionalidades Completadas
+### ✅ Funcionalidades Completadas Hoy (Fase 1.2)
+- **Redimensionamiento de Columnas**: Headers interactivos con resize handles
+- **Reordenamiento de Columnas**: Drag & drop para reorganizar columnas
+- **Selección Múltiple Mejorada**: Soporte para Shift+Click y Cmd+Click
+- **Barra de Información**: Muestra cantidad de procesos seleccionados
+- **Menú de Configuración**: Ocultar/mostrar columnas, reset a valores por defecto
+- **Persistencia Mejorada**: Configuración de columnas guardada en UserDefaults
+
+### ✅ Funcionalidades Previas (Fase 1.1)
+- **Menú Contextual con Click Derecho**: Acciones completas para gestión de procesos
+- **Acciones de Proceso**: Terminar (SIGTERM), Forzar terminación (SIGKILL), Suspender/Reanudar
+- **Diálogos de Confirmación**: Protección para acciones destructivas con ProcessActionConfirmation
+- **Feedback Visual**: Notificaciones de éxito/error para todas las operaciones
+- **Ordenamiento de Columnas**: Ya implementado con persistencia en AppState
+- **Atajos de Teclado**: ⌘K (Terminar), ⌘⇧K (Forzar), ⌘F (Buscar), ⌘R (Actualizar), ⌘I (Detalles)
+- **Vista de Detalles Panel Lateral**: Panel completo con información extendida del proceso
+- **Nice Priority**: Comandos de compilación configurados con `nice -n 19` para mínimo impacto
+
+### ✅ Funcionalidades Previas
 - **Network Monitor Rust Module**: Módulo completo de monitoreo de red con seguimiento de conexiones TCP/UDP
 - **Connection Tracker**: Parser de netstat y lsof para mapear conexiones a procesos
 - **Bandwidth Monitor**: Monitoreo de interfaces de red con cálculo de velocidades de transferencia  
@@ -37,11 +55,19 @@
 - **Advanced Filtering**: Búsqueda y filtros por proceso, protocolo, estado
 - **Visual Design**: Interfaz profesional con indicadores de estado por colores
 
-### 🚀 Próximos Pasos
-- Testing exhaustivo del network monitor en diferentes escenarios
-- Optimización de performance para sistemas con muchas conexiones
-- Posible implementación de alertas para conexiones sospechosas
-- Documentación de usuario para las nuevas funcionalidades
+### 🚀 Próximos Pasos (ROADMAP Fase 2)
+- **Fase 2.1 - Detección de Problemas**:
+  - Análisis de procesos unkillable
+  - Detección de estado D (uninterruptible sleep)
+  - Identificación de deadlocks
+  - Stack trace del kernel
+  - Análisis de I/O pendiente
+- **Fase 2.2 - Profiling Avanzado**:
+  - Sampling de CPU en tiempo real
+  - Flame graphs
+  - Historial de CPU con gráficos
+  - Análisis de context switches
+  - Detección de thermal throttling
 
 ### 🔍 Métricas de Desarrollo
 - Líneas de código Rust añadidas: ~800+

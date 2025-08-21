@@ -3,7 +3,7 @@ import SwiftUI
 
 class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
-    private var cpuMonitor: CPUMonitor
+    private var systemMonitor: SystemMonitor
     private var updateTimer: Timer?
     private var menu: NSMenu?
     
@@ -19,7 +19,7 @@ class StatusItemController: NSObject {
     private let stableThreshold: Int = 5 // After 5 stable readings, slow down
     
     override init() {
-        self.cpuMonitor = CPUMonitor()
+        self.systemMonitor = SystemMonitor()
         super.init()
         setupStatusItem()
         startMonitoring()
@@ -29,7 +29,7 @@ class StatusItemController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            button.title = "CPU: --"
+            button.title = "🔄 Loading..."
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -43,9 +43,14 @@ class StatusItemController: NSObject {
         menu = NSMenu()
         
         // CPU usage item (non-clickable, just info)
-        let cpuItem = NSMenuItem(title: "CPU Usage", action: nil, keyEquivalent: "")
+        let cpuItem = NSMenuItem(title: "CPU Usage: --", action: nil, keyEquivalent: "")
         cpuItem.isEnabled = false
         menu?.addItem(cpuItem)
+        
+        // Disk space item (non-clickable, just info)
+        let diskItem = NSMenuItem(title: "Disk Available: --", action: nil, keyEquivalent: "")
+        diskItem.isEnabled = false
+        menu?.addItem(diskItem)
         
         menu?.addItem(NSMenuItem.separator())
         
@@ -85,7 +90,7 @@ class StatusItemController: NSObject {
     
     private func startMonitoring() {
         // Initial update
-        updateCPUDisplay()
+        updateSystemDisplay()
         
         // Start timer with adaptive interval
         scheduleNextUpdate()
@@ -94,48 +99,56 @@ class StatusItemController: NSObject {
     private func scheduleNextUpdate() {
         updateTimer?.invalidate()
         updateTimer = Timer.scheduledTimer(withTimeInterval: currentRefreshInterval, repeats: false) { [weak self] _ in
-            self?.updateCPUDisplay()
+            self?.updateSystemDisplay()
             self?.adjustRefreshRate()
             self?.scheduleNextUpdate()
         }
     }
     
-    private func updateCPUDisplay() {
-        let cpuUsage = cpuMonitor.getCurrentCPUUsage()
+    private func updateSystemDisplay() {
+        let cpuUsage = systemMonitor.getCurrentCPUUsage()
         let cpuInt = Int(cpuUsage)
+        let diskMetrics = systemMonitor.getDiskMetrics()
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
-            // Update button title
+            // Update button title with both CPU and Disk
             if let button = self.statusItem?.button {
-                // Get emoji based on CPU usage
-                let emoji = self.emojiForCPU(cpuInt)
+                // Get emojis for both metrics
+                let cpuEmoji = self.emojiForCPU(cpuInt)
+                let diskEmoji = self.emojiForDisk(diskMetrics?.usagePercent ?? 0)
                 
-                // Format with emoji and percentage
-                button.title = "\(emoji) \(cpuInt)%"
+                // Format display string
+                var displayString = ""
                 
-                // Font weight based on CPU usage
-                let weight: NSFont.Weight
-                if cpuInt > 80 {
-                    weight = .bold
-                } else if cpuInt > 50 {
-                    weight = .medium
-                } else {
-                    weight = .regular
+                // CPU part
+                displayString += "\(cpuEmoji)\(cpuInt)%"
+                
+                // Disk part
+                if let disk = diskMetrics {
+                    displayString += " \(diskEmoji)\(disk.formattedAvailable)"
                 }
                 
-                // Apply monospaced font for consistent number width
+                button.title = displayString
+                
+                // Apply monospaced font for consistent width
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: weight)
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
                 ]
                 
                 button.attributedTitle = NSAttributedString(string: button.title, attributes: attributes)
             }
             
-            // Update menu if visible
-            if let cpuMenuItem = self.menu?.items.first {
-                cpuMenuItem.title = String(format: "CPU Usage: %.1f%%", cpuUsage)
+            // Update menu items
+            if self.menu?.items.count ?? 0 >= 2 {
+                self.menu?.items[0].title = String(format: "CPU Usage: %.1f%%", cpuUsage)
+                
+                if let disk = diskMetrics {
+                    self.menu?.items[1].title = String(format: "Disk Available: %@ (%.0f%% used)",
+                                                      disk.formattedAvailable,
+                                                      disk.usagePercent)
+                }
             }
         }
     }
@@ -151,8 +164,19 @@ class StatusItemController: NSObject {
         }
     }
     
+    private func emojiForDisk(_ usagePercent: Float) -> String {
+        switch usagePercent {
+        case 0..<70:
+            return "🟢"  // Green - plenty of space
+        case 70..<90:
+            return "🟡"  // Yellow - getting full
+        default:
+            return "🔴"  // Red - critical, almost full
+        }
+    }
+    
     private func adjustRefreshRate() {
-        let currentCPU = Int(cpuMonitor.getCurrentCPUUsage())
+        let currentCPU = Int(systemMonitor.getCurrentCPUUsage())
         let cpuDelta = abs(currentCPU - lastCPUValue)
         
         if cpuDelta < 3 {
@@ -233,7 +257,7 @@ class StatusItemController: NSObject {
     func cleanup() {
         updateTimer?.invalidate()
         updateTimer = nil
-        cpuMonitor.cleanup()
+        systemMonitor.cleanup()
         
         if let statusItem = statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)

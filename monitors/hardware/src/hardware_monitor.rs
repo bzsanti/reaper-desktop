@@ -1,4 +1,4 @@
-use sysinfo::{System, Components, CpuRefreshKind};
+use sysinfo::{System, Components};
 use std::process::Command;
 
 #[derive(Debug, Clone)]
@@ -53,7 +53,7 @@ pub struct HardwareMonitor {
 
 impl HardwareMonitor {
     pub fn new() -> Self {
-        let mut system = System::new_all();
+        let system = System::new_all();
         let components = Components::new_with_refreshed_list();
         
         Self {
@@ -79,7 +79,7 @@ impl HardwareMonitor {
         self.components.refresh();
         
         // Collect temperature sensors
-        let mut temperatures = self.collect_temperatures();
+        let temperatures = self.collect_temperatures();
         
         // Get CPU frequency
         let cpu_frequency_mhz = self.get_cpu_frequency();

@@ -1,7 +1,6 @@
-use crate::{NETWORK_MONITOR, NetworkConnection, ConnectionState, Protocol, BandwidthStats};
-use std::ffi::{CStr, CString};
+use crate::NETWORK_MONITOR;
+use std::ffi::CString;
 use std::os::raw::c_char;
-use libc::c_void;
 
 #[repr(C)]
 pub struct CNetworkConnection {

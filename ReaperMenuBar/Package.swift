@@ -21,7 +21,7 @@ let package = Package(
                 .unsafeFlags([
                     "-L../target/release",
                     "-lreaper_cpu_monitor",
-                    "-lreaper_memory_monitor",
+                    "-lreaper_disk_monitor",
                     "-framework", "IOKit",
                     "-framework", "CoreFoundation"
                 ])

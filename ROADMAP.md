@@ -13,7 +13,7 @@ Reaper será una herramienta profesional de monitoreo y análisis del sistema pa
 - [x] App bundle macOS
 
 ### 🚧 Fase 1: Funcionalidades Básicas de UI (En Progreso)
-**Duración estimada: 1 semana**
+**Duración estimada: 2 semanas** *(Inicio: Agosto 2025)*
 
 #### 1.1 Gestión de Procesos
 - [ ] Menú contextual con click derecho
@@ -26,10 +26,10 @@ Reaper será una herramienta profesional de monitoreo y análisis del sistema pa
 - [ ] Feedback visual de resultados
 
 #### 1.2 Mejoras de la Tabla
-- [ ] Ordenamiento de columnas clickeable
-- [ ] Redimensionamiento de columnas
-- [ ] Reordenamiento de columnas
-- [ ] Persistencia de preferencias
+- [x] Ordenamiento de columnas clickeable
+- [x] Redimensionamiento de columnas
+- [x] Reordenamiento de columnas
+- [x] Persistencia de preferencias (Column Visibility)
 - [ ] Selección múltiple de procesos
 
 #### 1.3 Atajos de Teclado
@@ -40,6 +40,7 @@ Reaper será una herramienta profesional de monitoreo y análisis del sistema pa
 - [ ] ⌘I - Información detallada
 
 #### 1.4 Vista de Detalles
+- [x] Vista de árbol de procesos (Process Tree View)
 - [ ] Panel lateral con información extendida
 - [ ] Path del ejecutable
 - [ ] Argumentos de línea de comandos
@@ -240,15 +241,17 @@ Reaper será una herramienta profesional de monitoreo y análisis del sistema pa
 
 ## 📅 Timeline General
 
-- **Q1 2024**: Fases 1-2 (Funcionalidades básicas + CPU avanzado)
-- **Q2 2024**: Fase 3 (Monitores adicionales)
-- **Q3 2024**: Fase 4 (Enterprise features)
-- **Q4 2024**: Fases 5-6 (UI avanzada + Optimización)
-- **Q1 2025**: v1.0 Release + App Store
+*Proyecto iniciado: Agosto 2025*
+
+- **Q3 2025** (actual): Fases 1-2 (Funcionalidades básicas + CPU avanzado)
+- **Q4 2025**: Fase 3 (Monitores adicionales)
+- **Q1 2026**: Fase 4 (Enterprise features)
+- **Q2 2026**: Fases 5-6 (UI avanzada + Optimización)
+- **Q3 2026**: v1.0 Release + App Store
 
 ## 🤝 Contribución
 
 El proyecto está abierto a contribuciones. Ver `CONTRIBUTING.md` para detalles.
 
 ---
-*Última actualización: Agosto 2024*
+*Última actualización: Agosto 2025*

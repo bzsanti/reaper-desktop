@@ -1,5 +1,6 @@
 import SwiftUI
 
+@available(macOS 14.4, *)
 struct ProcessListView: View {
     @ObservedObject var rustBridge: RustBridge
     @Binding var searchText: String
@@ -8,6 +9,9 @@ struct ProcessListView: View {
     @State private var displayedProcesses: [ProcessInfo] = []
     @State private var selectedProcesses = Set<UInt32>()
     @State private var sortOrder = [KeyPathComparator(\ProcessInfo.cpuUsage, order: .reverse)]
+    @State private var draggedColumn: String? = nil
+    @State private var useEnhancedTable = true  // Toggle for new features
+    @State private var showTreeView = false  // Toggle between tree and flat view
     
     // Notification system
     @StateObject private var notificationManager = NotificationManager()
@@ -25,13 +29,16 @@ struct ProcessListView: View {
     
     var processTable: some View {
         return Table(filteredProcesses, selection: $selectedProcesses, sortOrder: $sortOrder) {
-            TableColumn("PID", value: \.pid) { process in
-                Text("\(process.pid)")
-                    .font(.system(.body, design: .monospaced))
+            if appState.columnOrder.contains("pid") {
+                TableColumn("PID", value: \.pid) { process in
+                    Text(String(process.pid))
+                        .font(.system(.body, design: .monospaced))
+                }
+                .width(min: 50, ideal: appState.columnWidths["pid"] ?? 60, max: 120)
             }
-            .width(min: 50, ideal: appState.columnWidths["pid"] ?? 60, max: 120)
             
-            TableColumn("Name", value: \.name) { process in
+            if appState.columnOrder.contains("name") {
+                TableColumn("Name", value: \.name) { process in
                 HStack {
                     Image(systemName: iconForProcess(process))
                         .foregroundColor(.secondary)
@@ -50,10 +57,12 @@ struct ProcessListView: View {
                     
                     Spacer()
                 }
+                }
+                .width(min: 150, ideal: appState.columnWidths["name"] ?? 250, max: 400)
             }
-            .width(min: 150, ideal: appState.columnWidths["name"] ?? 250, max: 400)
             
-            TableColumn("CPU %", value: \.cpuUsage) { process in
+            if appState.columnOrder.contains("cpu") {
+                TableColumn("CPU %", value: \.cpuUsage) { process in
                 HStack {
                     Text(String(format: "%.1f", process.cpuUsage))
                         .font(.system(.body, design: .monospaced))
@@ -64,17 +73,21 @@ struct ProcessListView: View {
                             .progressViewStyle(.linear)
                             .frame(width: 50)
                     }
+                    }
                 }
+                .width(120)
             }
-            .width(120)
             
-            TableColumn("Memory", value: \.memoryMB) { process in
+            if appState.columnOrder.contains("memory") {
+                TableColumn("Memory", value: \.memoryMB) { process in
                 Text(formatMemory(process.memoryMB))
                     .font(.system(.body, design: .monospaced))
+                }
+                .width(min: 100, ideal: appState.columnWidths["memory"] ?? 120, max: 180)
             }
-            .width(min: 100, ideal: appState.columnWidths["memory"] ?? 120, max: 180)
             
-            TableColumn("Status", value: \.status) { process in
+            if appState.columnOrder.contains("status") {
+                TableColumn("Status", value: \.status) { process in
                 HStack(spacing: 4) {
                     // Icon for special states
                     if process.isUnkillable {
@@ -96,46 +109,97 @@ struct ProcessListView: View {
                 .padding(.vertical, 2)
                 .background(backgroundColorForStatus(process.status, isUnkillable: process.isUnkillable, isProblematic: process.isProblematic))
                 .cornerRadius(4)
+                }
+                .width(min: 80, ideal: appState.columnWidths["status"] ?? 100, max: 120)
             }
-            .width(min: 80, ideal: appState.columnWidths["status"] ?? 100, max: 120)
             
-            TableColumn("Threads", value: \.threadCount) { process in
-                Text("\(process.threadCount)")
+            if appState.columnOrder.contains("threads") {
+                TableColumn("Threads", value: \.threadCount) { process in
+                Text(String(process.threadCount))
                     .font(.system(.body, design: .monospaced))
+                }
+                .width(min: 60, ideal: appState.columnWidths["threads"] ?? 80, max: 100)
             }
-            .width(min: 60, ideal: appState.columnWidths["threads"] ?? 80, max: 100)
             
-            TableColumn("Runtime", value: \.runTime) { process in
+            if appState.columnOrder.contains("runtime") {
+                TableColumn("Runtime", value: \.runTime) { process in
                 Text(formatRuntime(process.runTime))
                     .font(.system(.body, design: .monospaced))
+                }
+                .width(min: 80, ideal: appState.columnWidths["runtime"] ?? 100, max: 150)
             }
-            .width(min: 80, ideal: appState.columnWidths["runtime"] ?? 100, max: 150)
             
-            TableColumn("Parent PID", value: \.parentPid) { process in
-                Text("\(process.parentPid)")
+            if appState.columnOrder.contains("parent_pid") {
+                TableColumn("Parent PID", value: \.parentPid) { process in
+                Text(String(process.parentPid))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(.secondary)
+                }
+                .width(min: 60, ideal: appState.columnWidths["parent_pid"] ?? 80, max: 100)
             }
-            .width(min: 60, ideal: appState.columnWidths["parent_pid"] ?? 80, max: 100)
             
-            TableColumn("User Time", value: \.userTime) { process in
+            if appState.columnOrder.contains("user_time") {
+                TableColumn("User Time", value: \.userTime) { process in
                 Text(String(format: "%.2fs", process.userTime))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(.blue)
+                }
+                .width(min: 60, ideal: appState.columnWidths["user_time"] ?? 80, max: 120)
             }
-            .width(min: 60, ideal: appState.columnWidths["user_time"] ?? 80, max: 120)
             
-            TableColumn("System Time", value: \.systemTime) { process in
+            if appState.columnOrder.contains("system_time") {
+                TableColumn("System Time", value: \.systemTime) { process in
                 Text(String(format: "%.2fs", process.systemTime))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(.orange)
+                }
+                .width(min: 60, ideal: appState.columnWidths["system_time"] ?? 80, max: 120)
             }
-            .width(min: 60, ideal: appState.columnWidths["system_time"] ?? 80, max: 120)
         }
     }
     
     var body: some View {
-        processTable
+        VStack(spacing: 0) {
+            // Toolbar with configuration
+            HStack {
+                SelectionInfoBar(
+                    selectedCount: selectedProcesses.count,
+                    totalCount: filteredProcesses.count,
+                    onClearSelection: {
+                        selectedProcesses.removeAll()
+                    }
+                )
+                
+                Spacer()
+                
+                // Tree view toggle button
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showTreeView.toggle()
+                    }
+                }) {
+                    Label(showTreeView ? "List View" : "Tree View", 
+                          systemImage: showTreeView ? "list.bullet" : "list.triangle")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .padding(.trailing, 8)
+                
+                if !showTreeView {
+                    TableConfigurationMenu()
+                        .padding(.trailing, 8)
+                }
+            }
+            .frame(height: 32)
+            .padding(.vertical, 4)
+            
+            // Main content - either tree or table
+            if showTreeView {
+                ProcessTreeView(rustBridge: rustBridge, searchText: $searchText)
+            } else {
+                processTable
+            }
+        }
         .contextMenu(forSelectionType: ProcessInfo.ID.self) { pids in
             let selectedPids = Array(pids)
             
@@ -234,6 +298,11 @@ struct ProcessListView: View {
         }
         .onReceive(rustBridge.$processes) { newProcesses in
             displayedProcesses = newProcesses
+            // Update selected process with new data if it still exists
+            if let currentSelected = selectedProcess,
+               let updatedProcess = newProcesses.first(where: { $0.pid == currentSelected.pid }) {
+                selectedProcess = updatedProcess
+            }
         }
         .onAppear {
             displayedProcesses = rustBridge.processes
@@ -249,6 +318,10 @@ struct ProcessListView: View {
             // Save sort preferences when sort order changes
             appState.savePreferences()
         }
+        .focusedValue(\.selectedProcess, selectedProcess)
+        .focusedValue(\.rustBridge, rustBridge)
+        .focusedValue(\.notificationManager, notificationManager)
+        .focusedValue(\.selectedProcesses, selectedProcesses)
         .withNotifications(notificationManager)
         .sheet(isPresented: $appState.showTerminateConfirmation) {
             if let process = appState.processToAct {
@@ -374,39 +447,39 @@ struct ProcessListView: View {
     }
     
     func suspendProcess(_ process: ProcessInfo) {
-        let success = rustBridge.suspendProcess(process.pid)
+        let result = rustBridge.suspendProcess(process.pid)
         
-        if success {
+        if result.success {
             notificationManager.show(
                 .success,
                 title: "Process Suspended",
-                message: "\(process.name) (PID: \(process.pid)) was suspended"
+                message: result.message
             )
             rustBridge.refresh()
         } else {
             notificationManager.show(
                 .error,
                 title: "Failed to Suspend",
-                message: "Could not suspend \(process.name)"
+                message: result.message
             )
         }
     }
     
     func resumeProcess(_ process: ProcessInfo) {
-        let success = rustBridge.resumeProcess(process.pid)
+        let result = rustBridge.resumeProcess(process.pid)
         
-        if success {
+        if result.success {
             notificationManager.show(
                 .success,
                 title: "Process Resumed",
-                message: "\(process.name) (PID: \(process.pid)) was resumed"
+                message: result.message
             )
             rustBridge.refresh()
         } else {
             notificationManager.show(
                 .error,
                 title: "Failed to Resume",
-                message: "Could not resume \(process.name)"
+                message: result.message
             )
         }
     }
@@ -552,8 +625,8 @@ struct ProcessListView: View {
         var failureCount = 0
         
         for process in processes {
-            let success = rustBridge.suspendProcess(process.pid)
-            if success {
+            let result = rustBridge.suspendProcess(process.pid)
+            if result.success {
                 successCount += 1
             } else {
                 failureCount += 1
@@ -584,8 +657,8 @@ struct ProcessListView: View {
         var failureCount = 0
         
         for process in processes {
-            let success = rustBridge.resumeProcess(process.pid)
-            if success {
+            let result = rustBridge.resumeProcess(process.pid)
+            if result.success {
                 successCount += 1
             } else {
                 failureCount += 1

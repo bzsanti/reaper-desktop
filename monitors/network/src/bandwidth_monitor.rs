@@ -1,6 +1,6 @@
 use std::process::Command;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct BandwidthStats {

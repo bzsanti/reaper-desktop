@@ -97,7 +97,7 @@ The Rust-Swift communication happens through C FFI:
 - `ReaperApp/Info.plist` - CFBundleShortVersionString and CFBundleVersion
 - `CHANGELOG.md` - Document changes under appropriate version
 
-Current Version: 0.3.0
+Current Version: 0.4.5
 
 ## Key Components
 

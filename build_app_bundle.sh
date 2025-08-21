@@ -58,8 +58,8 @@ pkill -f ReaperApp 2>/dev/null || true
 sleep 1
 
 # Build Rust libraries with CPU limit and nice priority
-echo "Building Rust libraries (limited to $MAX_CORES cores)..."
-nice -n 10 cargo build --release -j $MAX_CORES
+echo "Building Rust libraries (limited to $MAX_CORES cores with minimal priority)..."
+nice -n 19 cargo build --release -j $MAX_CORES
 
 # Verify Rust libraries
 echo "Verifying Rust libraries..."
@@ -67,18 +67,20 @@ verify_file "target/release/libreaper_cpu_monitor.dylib" 400000 || exit 1
 verify_file "target/release/libreaper_memory_monitor.dylib" 400000 || exit 1
 verify_file "target/release/libreaper_hardware_monitor.dylib" 400000 || exit 1
 verify_file "target/release/libreaper_network_monitor.dylib" 400000 || exit 1
+verify_file "target/release/libreaper_disk_monitor.dylib" 300000 || exit 1
 
 # Build Swift executable with all monitor libraries and CPU limit
-echo "Building Swift executable (limited to $MAX_CORES cores)..."
+echo "Building Swift executable (limited to $MAX_CORES cores with minimal priority)..."
 cd ReaperApp
-nice -n 10 swift build -c release -j $MAX_CORES -Xlinker -lreaper_memory_monitor -Xlinker -lreaper_hardware_monitor
+nice -n 19 swift build -c release -j $MAX_CORES -Xlinker -lreaper_memory_monitor -Xlinker -lreaper_hardware_monitor -Xlinker -lreaper_disk_monitor
 
 # Verify Swift executable
 verify_file ".build/release/ReaperApp" 1000000 || exit 1
 
 # Create app bundle structure
 echo "Creating app bundle..."
-APP_BUNDLE="../Reaper.app"
+REAPER_APP_DIR="/Users/santifdezmunoz/Documents/repos/BelowZero/ReaperSuite/ReaperDesktop/ReaperApp"
+APP_BUNDLE="$REAPER_APP_DIR/Reaper.app"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
@@ -113,10 +115,24 @@ for lib in target/release/*.dylib; do
     fi
 done
 
-# Create/copy icon
+# Fix library paths in executable to use @executable_path
+echo "Fixing library paths..."
+for lib in libreaper_core libreaper_cpu_monitor libreaper_memory_monitor libreaper_hardware_monitor libreaper_network_monitor libreaper_disk_monitor; do
+    if [ -f "$APP_BUNDLE/Contents/Frameworks/${lib}.dylib" ]; then
+        # Fix the path in the main executable
+        install_name_tool -change "$PWD/target/release/deps/${lib}.dylib" "@executable_path/../Frameworks/${lib}.dylib" "$APP_BUNDLE/Contents/MacOS/ReaperApp" 2>/dev/null || true
+        install_name_tool -change "$PWD/target/release/${lib}.dylib" "@executable_path/../Frameworks/${lib}.dylib" "$APP_BUNDLE/Contents/MacOS/ReaperApp" 2>/dev/null || true
+    fi
+done
+echo -e "${GREEN}✓ Library paths fixed${NC}"
+
+# Create/copy icon - check both possible locations
 if [ -f "Resources/AppIcon.icns" ]; then
     cp "Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
-    echo -e "${GREEN}✓ Icon copied${NC}"
+    echo -e "${GREEN}✓ Icon copied from Resources/${NC}"
+elif [ -f "../Resources/AppIcon.icns" ]; then
+    cp "../Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
+    echo -e "${GREEN}✓ Icon copied from ../Resources/${NC}"
 else
     # Create placeholder icon
     touch "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
@@ -124,7 +140,7 @@ else
 fi
 
 # Create version file
-echo "0.3.1" > "$APP_BUNDLE/Contents/Resources/VERSION"
+echo "0.4.0" > "$APP_BUNDLE/Contents/Resources/VERSION"
 echo "Build: $BUILD_TIMESTAMP" >> "$APP_BUNDLE/Contents/Resources/VERSION"
 
 # Sign the app
@@ -142,6 +158,7 @@ verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_cpu_monitor.dylib" 400000
 verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_memory_monitor.dylib" 400000 || exit 1
 verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_hardware_monitor.dylib" 400000 || exit 1
 verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_network_monitor.dylib" 400000 || exit 1
+verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_disk_monitor.dylib" 300000 || exit 1
 
 echo ""
 echo -e "${GREEN}✓ Reaper.app bundle created successfully!${NC}"

@@ -210,7 +210,7 @@ struct HighCpuView: View {
             .width(20)
             
             TableColumn("PID", value: \.pid) { process in
-                Text("\(process.pid)")
+                Text(String(process.pid))
                     .font(.system(.body, design: .monospaced))
             }
             .width(60)
@@ -454,39 +454,39 @@ struct HighCpuView: View {
     }
     
     func suspendProcess(_ process: ProcessInfo) {
-        let success = rustBridge.suspendProcess(process.pid)
+        let result = rustBridge.suspendProcess(process.pid)
         
-        if success {
+        if result.success {
             notificationManager.show(
                 .success,
                 title: "Process Suspended",
-                message: "\(process.name) (PID: \(process.pid)) was suspended"
+                message: result.message
             )
             rustBridge.refresh()
         } else {
             notificationManager.show(
                 .error,
                 title: "Failed to Suspend",
-                message: "Could not suspend \(process.name)"
+                message: result.message
             )
         }
     }
     
     func resumeProcess(_ process: ProcessInfo) {
-        let success = rustBridge.resumeProcess(process.pid)
+        let result = rustBridge.resumeProcess(process.pid)
         
-        if success {
+        if result.success {
             notificationManager.show(
                 .success,
                 title: "Process Resumed",
-                message: "\(process.name) (PID: \(process.pid)) was resumed"
+                message: result.message
             )
             rustBridge.refresh()
         } else {
             notificationManager.show(
                 .error,
                 title: "Failed to Resume",
-                message: "Could not resume \(process.name)"
+                message: result.message
             )
         }
     }
@@ -544,7 +544,8 @@ struct HighCpuView: View {
         var successCount = 0
         
         for process in processes {
-            if rustBridge.suspendProcess(process.pid) {
+            let result = rustBridge.suspendProcess(process.pid)
+            if result.success {
                 successCount += 1
             }
         }

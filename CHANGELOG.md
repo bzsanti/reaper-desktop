@@ -5,6 +5,175 @@ All notable changes to Reaper will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.6] - 2025-08-21
+
+### Added
+- 🔥 **Real-time CPU Sampling**: High-frequency CPU monitoring with advanced analysis
+  - RealTimeCpuSample structure for 50-100ms interval sampling
+  - CpuSamplingBuffer with circular buffer for memory-efficient storage
+  - AggregatedCpuMetrics for statistical analysis over time periods
+  - Context switches and interrupt tracking with delta calculations
+- 📊 **Flame Graph Support**: Performance profiling visualization capabilities
+  - FlameGraphData and FlameGraphNode structures for hierarchical stack trace analysis
+  - FlameGraphBuilder for constructing graphs from stack traces
+  - Export to folded format and JSON for compatibility with external tools
+  - Hot function analysis and performance bottleneck identification
+- 💾 **CPU History Persistence**: Long-term monitoring data storage
+  - CpuHistoryStore with JSONL file-based persistence
+  - Daily file rotation with automatic cleanup of old data
+  - Configurable retention periods and memory buffer sizes
+  - Historical data querying and statistical analysis
+  - Temperature and frequency tracking over time
+- 🌡️ **Thermal Monitoring**: Advanced thermal management and throttling detection
+  - ThermalMonitor with native macOS IOKit/SMC integration
+  - Multiple thermal sensor support (CPU cores, package, GPU, memory, ambient)
+  - Real-time thermal throttling detection with severity levels
+  - Temperature history tracking and thermal event logging
+  - Integration with Apple's System Management Controller (SMC)
+
+### Enhanced
+- 🚀 **CPU Analysis Architecture**: Phase 2 advanced monitoring capabilities complete
+  - Extended CpuAnalyzer with real-time sampling infrastructure
+  - Thermal integration for comprehensive system health monitoring
+  - Performance profiling tools for advanced debugging workflows
+  - Historical data persistence for trend analysis and capacity planning
+
+### Technical
+- 📦 **New Dependencies**: Added chrono crate for timestamp handling
+- 🧪 **Test Coverage**: Added comprehensive unit tests for all new modules
+- 🔧 **Build System**: Updated Cargo.toml configurations for new features
+- 📚 **Documentation**: Enhanced module documentation with usage examples
+
+### Architecture
+- 🏗️ **Advanced Monitoring Stack**: Complete CPU analysis ecosystem
+  - Real-time sampling layer for high-frequency data collection
+  - Flame graph layer for performance visualization and profiling
+  - Persistence layer for historical data management
+  - Thermal layer for system health and throttling detection
+
+## [0.4.5] - 2025-08-20
+
+### Added
+- 🌳 **Process Tree View Integration**: Hierarchical process view within main "All Processes" tab
+  - Toggle button to switch between flat list and hierarchical tree view
+  - Animated transitions between view modes (0.3s ease-in-out)
+  - Tree structure shows parent-child process relationships
+  - Expandable/collapsible process nodes
+  - Interactive checkboxes for multi-process selection in tree view
+- 👁️ **Column Visibility Controls**: Advanced table column management
+  - Dropdown menu to show/hide specific columns (PID, Name, CPU, Memory, etc.)
+  - Column visibility state persistence across app restarts
+  - Conditional column rendering with macOS 14.4+ requirement
+  - Smooth column animations when toggling visibility
+
+### Fixed
+- 🔢 **PID Formatting**: PIDs no longer display thousands separators (e.g., "1,234" now shows as "1234")
+- ☑️ **Tree View Checkboxes**: Properly rendering interactive checkboxes in tree view
+  - Replaced non-functional Image components with proper Button components
+  - Added visual feedback with accent color for selected items
+  - Fixed checkbox interaction and state management
+- 🔄 **CPU Data Consistency**: Synchronized data between main view and detail panel
+  - Added process synchronization in onReceive for real-time updates
+  - Fixed CPU percentage mismatches between different views
+  - Improved data refresh consistency across UI components
+- 🎯 **Process Selection**: Enhanced process tracking and selection persistence
+
+### Changed
+- 📱 **System Requirements**: Minimum macOS requirement updated to 14.4 for advanced table features
+  - Added `@available(macOS 14.4, *)` attribute to ProcessListView
+  - Conditional rendering for older macOS versions with fallback message
+  - Updated Info.plist with LSMinimumSystemVersion set to "14.4"
+- 🏗️ **UI Architecture**: Process tree view now embedded in main tab instead of separate tab
+  - Removed dedicated tree view tab (tag 5)
+  - Updated search visibility condition for integrated design
+  - Improved toolbar layout with tree/list toggle button
+- 🔧 **Build System**: Enhanced build reliability with absolute paths
+  - Updated build_app_bundle.sh with absolute path references
+  - Improved library linking with install_name_tool
+  - Build timestamp: 20250820225308
+
+### Technical Details
+- Implemented conditional content rendering with SwiftUI animations
+- Enhanced AppState column management with persistent storage
+- Added process selection synchronization across view modes
+- Improved FFI bridge reliability for process data consistency
+- Updated version strings in ContentView.swift and Info.plist
+
+## [0.4.4] - 2025-08-20
+
+### Added
+- Initial process tree view as separate tab
+- Basic toggle functionality for tree/list views
+
+### Fixed
+- Button height issues in toolbar
+- Initial compilation errors for tree view integration
+
+## [0.4.3] - 2025-08-20
+
+### Added
+- Foundation for tree view functionality
+- Process hierarchy data structures
+
+### Fixed
+- Various UI layout improvements
+- Performance optimizations for process monitoring
+
+## [0.4.2] - 2025-08-19
+
+### Fixed
+- Compilation issues with column visibility
+- UI consistency improvements
+
+## [0.4.1] - 2025-08-18
+
+### Added
+- 📊 **Menu Bar Integration**: System metrics now display in macOS menu bar
+  - CPU usage with color-coded emojis (🟢 <30%, 🟡 30-70%, 🔴 >70%)
+  - Disk space available with visual indicators (💾 normal, 📀 warning, 💿 critical)
+  - Compact display format: "🟢45% 💾250GB"
+  - Right-click menu with detailed system information
+  - Configurable refresh rates (Fast/Normal/Slow)
+  - One-click launch of main Reaper application
+
+### Enhanced
+- **ReaperMenuBar App**: Standalone menu bar monitor
+  - Minimal resource usage with adaptive refresh rates
+  - Smart caching to reduce FFI calls
+  - Runs as background app (LSUIElement)
+  - Can be set as login item for automatic startup
+  
+### Fixed
+- Improved icon handling in build scripts
+- Better library path resolution for menu bar app
+
+### Technical
+- SystemMonitor class replaces CPUMonitor with disk support
+- FFI bindings for both CPU and disk monitoring in menu bar
+- Optimized build scripts for both main and menu bar apps
+
+## [0.4.0] - 2025-08-18
+
+### Added
+- 💾 **Disk Monitor**: Complete disk monitoring system with real-time metrics
+  - Primary disk space display in header bar with color-coded usage
+  - Real-time disk usage tracking for all mounted volumes
+  - Disk type detection (HDD, SSD, Network, Removable)
+  - File system information for each disk
+  - Space available, used, and total metrics
+  - Visual indicators: Green (<70%), Orange (70-90%), Red (>90% usage)
+  - Formatted display with appropriate units (GB/TB)
+  - Support for multiple disk monitoring and growth rate tracking
+  
+### Technical
+- New Rust disk monitor module using sysinfo
+- FFI bridge with CDiskInfo and CDiskList structures
+- Disk growth history tracking (60 samples)
+- Automatic disk type detection based on mount points
+- Integration with Swift UI through RustBridge
+
 ## [0.3.1] - 2025-08-17
 
 ### Added
