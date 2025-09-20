@@ -1,0 +1,14 @@
+[package]
+name = "reaper-memory-monitor"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_memory_monitor"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+reaper-core = { path = "../../core" }
+sysinfo = { workspace = true }
+serde = { workspace = true }
+once_cell = "1.19"

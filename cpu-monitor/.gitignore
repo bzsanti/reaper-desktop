@@ -1,0 +1,25 @@
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+
+# Swift
+.build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+*.dSYM
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+*.a
+*.dylib
+*.so
+*.dll

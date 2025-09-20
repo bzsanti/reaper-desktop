@@ -1,0 +1,19 @@
+[package]
+name = "reaper-network-monitor"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_network_monitor"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+reaper-core = { path = "../../core" }
+sysinfo = { workspace = true }
+serde = { workspace = true }
+once_cell = { workspace = true }
+libc = { workspace = true }
+regex = "1.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = { workspace = true }

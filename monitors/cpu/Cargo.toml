@@ -1,0 +1,21 @@
+[package]
+name = "reaper-cpu-monitor"
+version = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+name = "reaper_cpu_monitor"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+reaper_core = { path = "../../core", package = "reaper-core" }
+sysinfo = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }
+mach2 = { workspace = true }

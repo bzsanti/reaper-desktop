@@ -1,0 +1,178 @@
+use crate::{CpuAnalyzer, ProcessMonitor};
+use once_cell::sync::Lazy;
+use std::ffi::CString;
+use std::os::raw::c_char;
+use std::sync::Mutex;
+
+static PROCESS_MONITOR: Lazy<Mutex<ProcessMonitor>> = Lazy::new(|| {
+    Mutex::new(ProcessMonitor::new())
+});
+
+static CPU_ANALYZER: Lazy<Mutex<CpuAnalyzer>> = Lazy::new(|| {
+    Mutex::new(CpuAnalyzer::new())
+});
+
+#[repr(C)]
+pub struct CProcessInfo {
+    pub pid: u32,
+    pub name: *mut c_char,
+    pub cpu_usage: f32,
+    pub memory_mb: f64,
+    pub status: *mut c_char,
+    pub parent_pid: u32,
+    pub thread_count: usize,
+    pub run_time: u64,
+}
+
+#[repr(C)]
+pub struct CProcessList {
+    pub processes: *mut CProcessInfo,
+    pub count: usize,
+}
+
+#[repr(C)]
+pub struct CCpuMetrics {
+    pub total_usage: f32,
+    pub core_count: usize,
+    pub load_avg_1: f64,
+    pub load_avg_5: f64,
+    pub load_avg_15: f64,
+    pub frequency_mhz: u64,
+}
+
+#[no_mangle]
+pub extern "C" fn monitor_init() {
+    let _ = &*PROCESS_MONITOR;
+    let _ = &*CPU_ANALYZER;
+}
+
+#[no_mangle]
+pub extern "C" fn monitor_refresh() {
+    if let Ok(mut monitor) = PROCESS_MONITOR.lock() {
+        monitor.refresh();
+    }
+    if let Ok(mut analyzer) = CPU_ANALYZER.lock() {
+        analyzer.refresh();
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn get_all_processes() -> *mut CProcessList {
+    let processes = match PROCESS_MONITOR.lock() {
+        Ok(monitor) => monitor.get_all_processes(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    
+    let count = processes.len();
+    let mut c_processes = Vec::with_capacity(count);
+    
+    for process in processes {
+        let name = CString::new(process.name.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        let status = CString::new(process.status.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        
+        c_processes.push(CProcessInfo {
+            pid: process.pid,
+            name: name.into_raw(),
+            cpu_usage: process.cpu_usage,
+            memory_mb: process.memory_mb,
+            status: status.into_raw(),
+            parent_pid: process.parent_pid.unwrap_or(0),
+            thread_count: process.thread_count,
+            run_time: process.run_time,
+        });
+    }
+    
+    let list = Box::new(CProcessList {
+        processes: c_processes.as_mut_ptr(),
+        count,
+    });
+    
+    std::mem::forget(c_processes);
+    Box::into_raw(list)
+}
+
+#[no_mangle]
+pub extern "C" fn get_high_cpu_processes(threshold: f32) -> *mut CProcessList {
+    let processes = match PROCESS_MONITOR.lock() {
+        Ok(monitor) => monitor.get_high_cpu_processes(threshold),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    
+    let count = processes.len();
+    let mut c_processes = Vec::with_capacity(count);
+    
+    for process in processes {
+        let name = CString::new(process.name.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        let status = CString::new(process.status.clone()).unwrap_or_else(|_| CString::new("").unwrap());
+        
+        c_processes.push(CProcessInfo {
+            pid: process.pid,
+            name: name.into_raw(),
+            cpu_usage: process.cpu_usage,
+            memory_mb: process.memory_mb,
+            status: status.into_raw(),
+            parent_pid: process.parent_pid.unwrap_or(0),
+            thread_count: process.thread_count,
+            run_time: process.run_time,
+        });
+    }
+    
+    let list = Box::new(CProcessList {
+        processes: c_processes.as_mut_ptr(),
+        count,
+    });
+    
+    std::mem::forget(c_processes);
+    Box::into_raw(list)
+}
+
+#[no_mangle]
+pub extern "C" fn get_cpu_metrics() -> *mut CCpuMetrics {
+    let metrics = match CPU_ANALYZER.lock() {
+        Ok(analyzer) => analyzer.get_current_metrics(),
+        Err(_) => return std::ptr::null_mut(),
+    };
+    
+    Box::into_raw(Box::new(CCpuMetrics {
+        total_usage: metrics.total_usage,
+        core_count: metrics.per_core_usage.len(),
+        load_avg_1: metrics.load_average.one_minute,
+        load_avg_5: metrics.load_average.five_minutes,
+        load_avg_15: metrics.load_average.fifteen_minutes,
+        frequency_mhz: metrics.frequency_mhz,
+    }))
+}
+
+#[no_mangle]
+pub extern "C" fn free_process_list(list: *mut CProcessList) {
+    if list.is_null() {
+        return;
+    }
+    
+    unsafe {
+        let list = Box::from_raw(list);
+        for i in 0..list.count {
+            let process = list.processes.add(i);
+            let _ = CString::from_raw((*process).name);
+            let _ = CString::from_raw((*process).status);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_cpu_metrics(metrics: *mut CCpuMetrics) {
+    if !metrics.is_null() {
+        unsafe {
+            let _ = Box::from_raw(metrics);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_string(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe {
+            let _ = CString::from_raw(s);
+        }
+    }
+}
