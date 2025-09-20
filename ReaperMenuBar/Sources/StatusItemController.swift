@@ -46,7 +46,12 @@ class StatusItemController: NSObject {
         let cpuItem = NSMenuItem(title: "CPU Usage: --", action: nil, keyEquivalent: "")
         cpuItem.isEnabled = false
         menu?.addItem(cpuItem)
-        
+
+        // CPU temperature item (non-clickable, just info)
+        let tempItem = NSMenuItem(title: "CPU Temperature: --", action: nil, keyEquivalent: "")
+        tempItem.isEnabled = false
+        menu?.addItem(tempItem)
+
         // Disk space item (non-clickable, just info)
         let diskItem = NSMenuItem(title: "Disk Available: --", action: nil, keyEquivalent: "")
         diskItem.isEnabled = false
@@ -108,44 +113,51 @@ class StatusItemController: NSObject {
     private func updateSystemDisplay() {
         let cpuUsage = systemMonitor.getCurrentCPUUsage()
         let cpuInt = Int(cpuUsage)
+        let temperature = systemMonitor.getCurrentTemperature()
+        let tempInt = Int(temperature)
         let diskMetrics = systemMonitor.getDiskMetrics()
-        
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
-            // Update button title with both CPU and Disk
+
+            // Update button title with CPU, Temperature, and Disk
             if let button = self.statusItem?.button {
-                // Get emojis for both metrics
+                // Get emojis for metrics
                 let cpuEmoji = self.emojiForCPU(cpuInt)
+                let tempEmoji = self.emojiForTemperature(tempInt)
                 let diskEmoji = self.emojiForDisk(diskMetrics?.usagePercent ?? 0)
-                
-                // Format display string
+
+                // Format display string: CPU | Temp | Disk
                 var displayString = ""
-                
+
                 // CPU part
                 displayString += "\(cpuEmoji)\(cpuInt)%"
-                
+
+                // Temperature part
+                displayString += " \(tempEmoji)\(tempInt)°"
+
                 // Disk part
                 if let disk = diskMetrics {
                     displayString += " \(diskEmoji)\(disk.formattedAvailable)"
                 }
-                
+
                 button.title = displayString
-                
+
                 // Apply monospaced font for consistent width
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
                 ]
-                
+
                 button.attributedTitle = NSAttributedString(string: button.title, attributes: attributes)
             }
-            
+
             // Update menu items
-            if self.menu?.items.count ?? 0 >= 2 {
+            if self.menu?.items.count ?? 0 >= 3 {
                 self.menu?.items[0].title = String(format: "CPU Usage: %.1f%%", cpuUsage)
-                
+                self.menu?.items[1].title = String(format: "CPU Temperature: %.0f°C", temperature)
+
                 if let disk = diskMetrics {
-                    self.menu?.items[1].title = String(format: "Disk Available: %@ (%.0f%% used)",
+                    self.menu?.items[2].title = String(format: "Disk Available: %@ (%.0f%% used)",
                                                       disk.formattedAvailable,
                                                       disk.usagePercent)
                 }
@@ -172,6 +184,19 @@ class StatusItemController: NSObject {
             return "🟡"  // Yellow - getting full
         default:
             return "🔴"  // Red - critical, almost full
+        }
+    }
+
+    private func emojiForTemperature(_ temp: Int) -> String {
+        switch temp {
+        case 0..<50:
+            return "🟢"  // Green - cool
+        case 50..<70:
+            return "🟡"  // Yellow - warm
+        case 70..<85:
+            return "🟠"  // Orange - hot
+        default:
+            return "🔴"  // Red - very hot
         }
     }
     

@@ -10,7 +10,7 @@ struct ContentView: View {
     
     // Version info
     private let appVersion = "0.4.6"  // Advanced CPU Analysis - Phase 2 complete
-    private let buildVersion = "20250821192940"  // Unique build timestamp
+    private let buildVersion = "20250920235348"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -148,13 +148,23 @@ struct ContentView: View {
                             value: String(format: "%.1f%%", metrics.totalUsage),
                             color: colorForCpuUsage(metrics.totalUsage)
                         )
-                        
+
+                        // CPU Temperature Badge
+                        if let hardware = rustBridge.hardwareMetrics,
+                           let cpuTemp = hardware.temperatures.first(where: { $0.sensorType == .cpuPackage || $0.sensorType == .cpuCore }) {
+                            MetricBadge(
+                                label: "Temp",
+                                value: String(format: "%.0f°C", cpuTemp.valueCelsius),
+                                color: colorForTemperature(cpuTemp.valueCelsius)
+                            )
+                        }
+
                         MetricBadge(
                             label: "Load",
                             value: String(format: "%.2f", metrics.loadAverage1),
                             color: .blue
                         )
-                        
+
                         MetricBadge(
                             label: "Cores",
                             value: "\(metrics.coreCount)",
@@ -235,6 +245,19 @@ struct ContentView: View {
         case 0..<70:
             return .green
         case 70..<90:
+            return .orange
+        default:
+            return .red
+        }
+    }
+
+    func colorForTemperature(_ temp: Float) -> Color {
+        switch temp {
+        case 0..<50:
+            return .green
+        case 50..<70:
+            return .yellow
+        case 70..<85:
             return .orange
         default:
             return .red

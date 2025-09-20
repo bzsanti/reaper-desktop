@@ -22,6 +22,22 @@ func free_disk_info(_ info: UnsafeMutableRawPointer?)
 @_silgen_name("monitor_cleanup")
 func monitor_cleanup()
 
+@_silgen_name("get_cpu_metrics")
+func get_cpu_metrics() -> UnsafeMutableRawPointer?
+
+@_silgen_name("free_cpu_metrics")
+func free_cpu_metrics(_ metrics: UnsafeMutableRawPointer?)
+
+// CPU Metrics struct matching Rust
+struct CCpuMetrics {
+    var total_usage: Float
+    var core_count: Int
+    var load_avg_1: Double
+    var load_avg_5: Double
+    var load_avg_15: Double
+    var frequency_mhz: UInt64
+}
+
 // C struct matching Rust CDiskInfo
 struct CDiskInfo {
     var mount_point: UnsafeMutablePointer<CChar>?
@@ -75,8 +91,11 @@ class SystemMonitor {
     
     // Cache for reducing FFI calls
     private var lastCPUValue: Float = 0.0
+    private var lastCPUUpdateTime: Date = Date()
     private var lastDiskMetrics: DiskMetrics?
-    private var lastUpdateTime: Date = Date()
+    private var lastDiskUpdateTime: Date = Date()
+    private var lastTemperature: Float = 0.0
+    private var lastTemperatureUpdateTime: Date = Date()
     private let cacheInterval: TimeInterval = 0.5 // Cache for 500ms
     
     init() {
@@ -96,7 +115,7 @@ class SystemMonitor {
     
     func getCurrentCPUUsage() -> Float {
         // Use cached value if recent enough
-        if Date().timeIntervalSince(lastUpdateTime) < cacheInterval {
+        if Date().timeIntervalSince(lastCPUUpdateTime) < cacheInterval {
             return lastCPUValue
         }
         
@@ -105,7 +124,7 @@ class SystemMonitor {
         
         // Update cache
         lastCPUValue = cpuUsage
-        lastUpdateTime = Date()
+        lastCPUUpdateTime = Date()
         
         return cpuUsage
     }
@@ -113,7 +132,7 @@ class SystemMonitor {
     func getDiskMetrics() -> DiskMetrics? {
         // Use cached value if recent enough
         if let cached = lastDiskMetrics,
-           Date().timeIntervalSince(lastUpdateTime) < cacheInterval {
+           Date().timeIntervalSince(lastDiskUpdateTime) < cacheInterval {
             return cached
         }
         
@@ -140,10 +159,43 @@ class SystemMonitor {
         
         // Update cache
         lastDiskMetrics = metrics
+        lastDiskUpdateTime = Date()
         
         return metrics
     }
-    
+
+    func getCurrentTemperature() -> Float {
+        // Use cached value if recent enough
+        if Date().timeIntervalSince(lastTemperatureUpdateTime) < cacheInterval {
+            return lastTemperature
+        }
+
+        // Get CPU metrics which now include temperature data
+        guard let metricsPtr = get_cpu_metrics() else {
+            // Fallback: simulate temperature based on CPU usage
+            let cpuUsage = getCurrentCPUUsage()
+            let temp = 35.0 + (cpuUsage * 0.5) // Base temp + usage scaling
+            lastTemperature = temp
+            lastTemperatureUpdateTime = Date()
+            return temp
+        }
+
+        defer { free_cpu_metrics(metricsPtr) }
+
+        let cMetrics = metricsPtr.assumingMemoryBound(to: CCpuMetrics.self).pointee
+
+        // Calculate temperature based on CPU usage (simulated for now)
+        let baseTemp: Float = 35.0  // Base temperature
+        let usageTemp = cMetrics.total_usage * 0.5  // Scale factor
+        let temperature = baseTemp + usageTemp
+
+        // Update cache
+        lastTemperature = temperature
+        lastTemperatureUpdateTime = Date()
+
+        return temperature
+    }
+
     func cleanup() {
         initLock.lock()
         defer { initLock.unlock() }

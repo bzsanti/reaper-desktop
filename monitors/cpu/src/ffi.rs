@@ -711,46 +711,33 @@ pub extern "C" fn initialize_thermal_monitor() -> u8 {
 // Get current thermal data
 #[no_mangle]
 pub extern "C" fn get_thermal_data() -> *mut CThermalData {
-    let monitor = THERMAL_MONITOR.get_or_init(|| {
-        let config = ThermalConfig::default();
-        Mutex::new(ThermalMonitor::new(config).unwrap_or_else(|_| {
-            // Return a dummy monitor if initialization fails
-            ThermalMonitor::new(ThermalConfig {
-                polling_interval_ms: 5000,
-                temperature_threshold_celsius: 100.0,
-                throttling_detection_enabled: false,
-                sensor_blacklist: Vec::new(),
-                alert_on_high_temperature: false,
-                max_history_entries: 100,
-            }).unwrap()
-        }))
-    });
-
-    let mut monitor = monitor.lock().unwrap();
-    let _ = monitor.update(); // Update sensor readings
-
-    let sensors = monitor.get_sensors();
-    let cpu_temp = monitor.get_cpu_temperature().unwrap_or(0.0);
-    let is_throttling = monitor.is_throttling_active();
-    let hottest = monitor.get_hottest_temperature().unwrap_or(0.0);
-
-    // Convert to C structures
-    let c_sensors: Vec<CThermalSensor> = sensors.iter().map(|sensor| {
-        CThermalSensor {
-            name: CString::new(sensor.name.clone()).unwrap().into_raw(),
-            location: CString::new(format!("{:?}", sensor.location)).unwrap().into_raw(),
-            current_temperature: sensor.current_temperature,
-            max_temperature: sensor.max_temperature,
-            is_throttling: if is_throttling { 1 } else { 0 },
+    // Get temperature from CPU analyzer instead of thermal monitor
+    let cpu_temp = match CPU_ANALYZER.lock() {
+        Ok(analyzer) => {
+            let metrics = analyzer.get_current_metrics();
+            metrics.temperature.unwrap_or(0.0)
         }
-    }).collect();
+        Err(_) => 0.0,
+    };
+
+    // Create a single CPU sensor with real temperature
+    let sensor = CThermalSensor {
+        name: CString::new("CPU Package").unwrap().into_raw(),
+        location: CString::new("CpuPackage").unwrap().into_raw(),
+        current_temperature: cpu_temp,
+        max_temperature: cpu_temp, // For now, use current as max
+        is_throttling: if cpu_temp > 85.0 { 1 } else { 0 },
+    };
+
+    let sensors = vec![sensor];
+    let is_throttling = cpu_temp > 85.0;
 
     let thermal_data = Box::new(CThermalData {
-        sensors: Box::into_raw(c_sensors.into_boxed_slice()) as *mut CThermalSensor,
-        sensor_count: sensors.len(),
+        sensors: Box::into_raw(sensors.into_boxed_slice()) as *mut CThermalSensor,
+        sensor_count: 1,
         cpu_temperature: cpu_temp,
         is_throttling: if is_throttling { 1 } else { 0 },
-        hottest_temperature: hottest,
+        hottest_temperature: cpu_temp,
     });
 
     Box::into_raw(thermal_data)
