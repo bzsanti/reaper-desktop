@@ -182,6 +182,7 @@ impl KernelInterface {
         }
     }
     
+    #[allow(dead_code)] // Reserved for future file descriptor monitoring feature
     fn count_open_files(&self, pid: u32) -> Option<usize> {
         // macOS specific: use lsof command or proc info
         // This is a simplified version

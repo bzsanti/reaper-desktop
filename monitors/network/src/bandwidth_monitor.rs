@@ -192,7 +192,7 @@ impl BandwidthMonitor {
                         drops_out: 0,
                     });
                 }
-            } else if let Some(ref mut interface) = current_interface {
+            } else if current_interface.is_some() {
                 // Parse interface statistics
                 // Look for lines like: "RX packets:12345 errors:0 dropped:0"
                 if line.contains("packets") || line.contains("bytes") {

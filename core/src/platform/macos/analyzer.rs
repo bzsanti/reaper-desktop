@@ -41,7 +41,6 @@ pub struct MacOSProcessAnalyzer {
 #[derive(Debug, Clone)]
 struct ResponseHistory {
     last_test_time: Instant,
-    response_times: Vec<Duration>,
     failed_signals: Vec<i32>,
     is_marked_unkillable: bool,
 }
@@ -153,22 +152,18 @@ impl MacOSProcessAnalyzer {
         }
         
         Ok(ProcessSysctlInfo {
-            pid,
             state_char: fields[2].chars().next().unwrap_or('?'),
             wchan: if fields[3] == "-" { None } else { Some(fields[3].to_string()) },
             nice: fields[4].parse().unwrap_or(0),
-            cpu_time: fields[5].to_string(),
         })
     }
 }
 
 #[derive(Debug)]
 struct ProcessSysctlInfo {
-    pid: u32,
     state_char: char,
     wchan: Option<String>,
     nice: i32,
-    cpu_time: String,
 }
 
 impl ProcessAnalyzer for MacOSProcessAnalyzer {
@@ -190,7 +185,6 @@ impl ProcessAnalyzer for MacOSProcessAnalyzer {
         if let Ok(mut cache) = self.response_cache.write() {
             let history = cache.entry(pid).or_insert_with(|| ResponseHistory {
                 last_test_time: Instant::now(),
-                response_times: Vec::new(),
                 failed_signals: Vec::new(),
                 is_marked_unkillable: false,
             });

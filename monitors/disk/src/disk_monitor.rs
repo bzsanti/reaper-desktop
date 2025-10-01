@@ -16,6 +16,7 @@ pub struct DiskInfo {
 
 #[derive(Debug, Clone)]
 pub enum DiskType {
+    #[allow(dead_code)] // Part of public API, may be used by FFI consumers
     HDD,
     SSD,
     Network,
@@ -110,12 +111,14 @@ impl DiskMonitor {
             .find(|disk| disk.mount_point == "/")
     }
     
+    #[allow(dead_code)] // Used by FFI layer
     pub fn get_disk_by_mount_point(&self, mount_point: &str) -> Option<DiskInfo> {
         self.get_all_disks()
             .into_iter()
             .find(|disk| disk.mount_point == mount_point)
     }
     
+    #[allow(dead_code)] // Used by FFI layer
     pub fn get_high_usage_disks(&self, threshold: f32) -> Vec<DiskInfo> {
         self.get_all_disks()
             .into_iter()
@@ -123,6 +126,7 @@ impl DiskMonitor {
             .collect()
     }
     
+    #[allow(dead_code)] // Used by FFI layer
     pub fn get_disk_growth_rate(&self, mount_point: &str) -> Option<f32> {
         // Calculate growth rate in MB/min
         if let Some(history) = self.disk_history.get(mount_point) {
