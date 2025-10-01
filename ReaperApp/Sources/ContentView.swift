@@ -9,8 +9,8 @@ struct ContentView: View {
     @EnvironmentObject var appState: AppState
     
     // Version info
-    private let appVersion = "0.4.6"  // Advanced CPU Analysis - Phase 2 complete
-    private let buildVersion = "20250920235348"  // Unique build timestamp
+    private let appVersion = "0.4.7"  // Disk module expansion - Phase 1
+    private let buildVersion = "20251001231727"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -56,13 +56,19 @@ struct ContentView: View {
                             Label("Network", systemImage: "network")
                         }
                         .tag(3)
-                    
+
+                    DiskView(rustBridge: rustBridge)
+                        .tabItem {
+                            Label("Disk", systemImage: "internaldrive")
+                        }
+                        .tag(4)
+
                     SystemMetricsView(rustBridge: rustBridge)
                         .tabItem {
                             Label("System Metrics", systemImage: "speedometer")
                         }
-                        .tag(4)
-                    
+                        .tag(5)
+
                     // Advanced CPU Analysis Tab (v0.4.6)
                     VStack {
                         HStack {
@@ -74,7 +80,7 @@ struct ContentView: View {
                     .tabItem {
                         Label("Advanced CPU", systemImage: "cpu")
                     }
-                    .tag(5)
+                    .tag(6)
                 }
             }
             .frame(minWidth: 600)

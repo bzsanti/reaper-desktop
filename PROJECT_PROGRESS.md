@@ -1,171 +1,106 @@
-# Progreso del Proyecto - 2025-09-21 00:23:33
+# Progreso del Proyecto - 2025-10-01 23:20:00
 
 ## Estado Actual
-- Rama: main
-- Último commit: fe4cf02 Merge branch 'develop_santi'
-- Tests: ✅ Pasando (19/19 tests exitosos - 6 core + 13 cpu monitor)
+- Rama: development
+- Último commit: feat: implement comprehensive authentication testing suite
+- Tests: ✅ 15 tests pasando (13 CPU + 2 Disk)
+- Versión: 0.4.7 - Disk module expansion Phase 1
 
-## Funcionalidades Implementadas en Esta Sesión
-### Sistema de Monitoreo de Temperatura CPU
-- ✅ Detección real de temperatura usando sysctl machdep.xcpm.cpu_thermal_state
-- ✅ Fallback inteligente: sysctl → powermetrics → simulación basada en CPU usage  
-- ✅ Badge de temperatura en header principal con colores indicativos
-- ✅ Temperatura en menu bar con formato compacto (🟢65% 🟡42° 🟢156GB)
-- ✅ Sistema de colores: Verde < 50°C, Amarillo 50-70°C, Naranja 70-85°C, Rojo > 85°C
+## Resumen de la Sesión
 
-### Mejoras Técnicas
-- ✅ CpuAnalyzer actualizado para obtener datos térmicos reales
-- ✅ Funciones FFI corregidas para exponer temperatura desde CpuAnalyzer
-- ✅ ReaperMenuBar.app actualizado con temperatura en tiempo real
-- ✅ Build version incrementado a 20250920235348
+### Módulo de Disco - Ampliación Completa
 
-## Archivos Modificados
-A	.gitignore
-A	AppIcon.icns
-A	CHANGELOG.md
-A	CLAUDE.md
-A	Cargo.toml
-A	FEATURES.md
-A	Makefile
-A	PLATFORM_ABSTRACTION.md
-A	PROJECT_PROGRESS.md
-A	Package.swift
-A	README.md
-A	ROADMAP.md
-A	Reaper macOS app icon.png
-A	Reaper.iconset/icon_128x128.png
-A	Reaper.iconset/icon_128x128@2x.png
-A	Reaper.iconset/icon_16x16.png
-A	Reaper.iconset/icon_16x16@2x.png
-A	Reaper.iconset/icon_256x256.png
-A	Reaper.iconset/icon_256x256@2x.png
-A	Reaper.iconset/icon_32x32.png
-A	Reaper.iconset/icon_32x32@2x.png
-A	Reaper.iconset/icon_512x512.png
-A	Reaper.iconset/icon_512x512@2x.png
-A	ReaperApp/.gitignore
-A	ReaperApp/Info.plist
-A	ReaperApp/Package.swift
-A	ReaperApp/Sources/AppState.swift
-A	ReaperApp/Sources/CHeaders/cpu_monitor_core.h
-A	ReaperApp/Sources/ConfirmationDialog.swift
-A	ReaperApp/Sources/ContentView.swift
-A	ReaperApp/Sources/FocusedValues.swift
-A	ReaperApp/Sources/HighCpuView.swift
-A	ReaperApp/Sources/KeyboardShortcuts.swift
-A	ReaperApp/Sources/MemoryView.swift
-A	ReaperApp/Sources/NetworkView.swift
-A	ReaperApp/Sources/NotificationView.swift
-A	ReaperApp/Sources/ProcessDetailView.swift
-A	ReaperApp/Sources/ProcessListView.swift
-A	ReaperApp/Sources/ProcessTreeView.swift
-A	ReaperApp/Sources/ReaperApp.swift
-A	ReaperApp/Sources/ResizableTableHeader.swift
-A	ReaperApp/Sources/RustBridge.swift
-A	ReaperApp/Sources/SystemMetricsView.swift
-A	ReaperApp/Sources/TableEnhancements.swift
-A	ReaperApp/Sources/ThermalMonitorView.swift
-A	ReaperMenuBar/Info.plist
-A	ReaperMenuBar/Package.swift
-A	ReaperMenuBar/Sources/ReaperMenuBarApp.swift
-A	ReaperMenuBar/Sources/StatusItemController.swift
-A	ReaperMenuBar/Sources/SystemMonitor.swift
-A	Resources/AppIcon.icns
-A	Sources/main.swift
-A	build_app_bundle.sh
-A	build_menubar.sh
-A	core/Cargo.toml
-A	core/src/common/mod.rs
-A	core/src/ffi/mod.rs
-A	core/src/lib.rs
-A	core/src/platform/macos/analyzer.rs
-A	core/src/platform/macos/kernel.rs
-A	core/src/platform/macos/mod.rs
-A	core/src/platform/macos/process.rs
-A	core/src/platform/macos/system.rs
-A	core/src/platform/mod.rs
-A	core/src/platform/tests.rs
-A	core/src/platform/windows/kernel.rs
-A	core/src/platform/windows/mod.rs
-A	core/src/platform/windows/process.rs
-A	core/src/platform/windows/system.rs
-A	cpu-monitor/.gitignore
-A	cpu-monitor/Cargo.toml
-A	cpu-monitor/Makefile
-A	cpu-monitor/Package.swift
-A	cpu-monitor/build.sh
-A	cpu-monitor/rust-core/Cargo.toml
-A	cpu-monitor/rust-core/build.rs
-A	cpu-monitor/rust-core/src/cpu_analyzer.rs
-A	cpu-monitor/rust-core/src/ffi.rs
-A	cpu-monitor/rust-core/src/kernel_interface.rs
-A	cpu-monitor/rust-core/src/lib.rs
-A	cpu-monitor/rust-core/src/process_monitor.rs
-A	cpu-monitor/swift-ui/Sources/CHeaders/cpu_monitor_core.h
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/CPUMonitorApp.swift
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/ContentView.swift
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/HighCpuView.swift
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/ProcessListView.swift
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/RustBridge.swift
-A	cpu-monitor/swift-ui/Sources/CPUMonitorApp/SystemMetricsView.swift
-A	deploy.sh
-A	fix_icon.sh
-A	monitors/cpu/Cargo.toml
-A	monitors/cpu/src/cpu_analyzer.rs
-A	monitors/cpu/src/cpu_history.rs
-A	monitors/cpu/src/cpu_throttler.rs
-A	monitors/cpu/src/ffi.rs
-A	monitors/cpu/src/flame_graph.rs
-A	monitors/cpu/src/kernel_interface.rs
-A	monitors/cpu/src/lib.rs
-A	monitors/cpu/src/process_details.rs
-A	monitors/cpu/src/process_limiter.rs
-A	monitors/cpu/src/process_monitor.rs
-A	monitors/cpu/src/process_tree.rs
-A	monitors/cpu/src/thermal_monitor.rs
-A	monitors/disk/Cargo.toml
-A	monitors/disk/src/disk_monitor.rs
-A	monitors/disk/src/ffi.rs
-A	monitors/disk/src/lib.rs
-A	monitors/hardware/Cargo.toml
-A	monitors/hardware/src/ffi.rs
-A	monitors/hardware/src/hardware_monitor.rs
-A	monitors/hardware/src/lib.rs
-A	monitors/memory/Cargo.toml
-A	monitors/memory/src/ffi.rs
-A	monitors/memory/src/lib.rs
-A	monitors/memory/src/memory_monitor.rs
-A	monitors/network/Cargo.toml
-A	monitors/network/src/bandwidth_monitor.rs
-A	monitors/network/src/connection_tracker.rs
-A	monitors/network/src/ffi.rs
-A	monitors/network/src/lib.rs
-A	monitors/network/src/network_monitor.rs
-A	scripts/manage_menubar_startup.sh
+**1. Investigación de Discrepancia Datos Disco**
+- ✅ Verificado singleton compartido entre MenuBar y Desktop app
+- ✅ Confirmado datos consistentes: 78.5 GB disponibles
+- ✅ Identificado cache de 500ms en MenuBar como única diferencia temporal
 
-## Aplicaciones Instaladas
-- ✅ /Applications/Reaper.app v0.4.6 (build 20250920235348)
-- ✅ /Applications/ReaperMenuBar.app (con soporte de temperatura)
+**2. Nuevo Tab de Disk (DiskView.swift)**
+- ✅ Vista completa con 3 sub-tabs:
+  - Disks Overview: Lista de discos con métricas detalladas
+  - Large Files: UI preparada para escaneo de archivos
+  - Duplicates: UI preparada para búsqueda de duplicados
+- ✅ Gráficos donut chart (macOS 14.0+) con fallback
+- ✅ Cards individuales por disco con barras de progreso
+- ✅ Integrado en ContentView como tag(4)
 
-## Tests Ejecutados
-- ✅ 6 tests core platform (todos pasando)
-- ✅ 13 tests cpu monitor (todos pasando)
-- ✅ 0 tests disk/hardware/memory/network (sin tests implementados)
+**3. Backend Rust - Análisis de Archivos**
+- ✅ file_analyzer.rs implementado:
+  - FileAnalyzer con configuración flexible
+  - analyze_directory(): escaneo recursivo con métricas
+  - find_duplicates(): detección por hashing rápido (blake3)
+  - Optimización: chunks para archivos grandes (8KB first/middle/last)
+- ✅ Tests unitarios: 2/2 pasando
+- ✅ Dependencia blake3 agregada
 
-## Repositorio Git
-- ✅ Commit: feat: implement real CPU temperature monitoring system
-- ✅ Merge completado con rama main
-- ✅ Push exitoso a repositorio remoto
+## Archivos Creados/Modificados
+
+**Nuevos:**
+- ReaperApp/Sources/DiskView.swift (416 líneas)
+- monitors/disk/src/file_analyzer.rs (337 líneas)
+- monitors/disk/src/bin/test_disk.rs (test helper)
+
+**Modificados:**
+- ReaperApp/Sources/ContentView.swift (versión 0.4.7, nuevo tab)
+- monitors/disk/Cargo.toml (dependencias blake3, tempfile)
+- monitors/disk/src/lib.rs (exportar file_analyzer)
+- monitors/disk/src/ffi.rs (debug logging)
+
+## Métricas de Tests
+```
+✅ reaper-cpu-monitor: 13 tests passed
+✅ reaper-disk-monitor: 2 tests passed
+✅ Total: 15/15 tests passing
+⚠️  Warnings: 112 (non-critical, unused variables)
+```
 
 ## Próximos Pasos
-- Implementar tests para módulos disk, hardware, memory, network
-- Optimizar detección de temperatura real en macOS (permisos SMC)
-- Añadir gráficos históricos de temperatura
-- Implementar alertas de temperatura crítica
-- Revisar feedback de PRs pendientes
 
-## Sesión Completada
-- Fecha: 2025-09-21 00:23:33
-- Duración estimada: ~2 horas
-- Estado: ✅ Exitosa - Funcionalidad de temperatura completamente implementada e instalada
+### Fase 2 - Integración FFI Completa
+- [ ] Exponer analyze_directory() via FFI a Swift
+- [ ] Exponer find_duplicates() via FFI a Swift
+- [ ] Implementar progress callbacks para escaneos largos
+- [ ] Conectar botones UI con backend Rust
+
+### Fase 3 - Visualización Avanzada
+- [ ] Tabla interactiva de archivos grandes (sorteable)
+- [ ] Tabla de grupos de duplicados con acciones
+- [ ] Gráfico de uso por tipo de archivo (pie chart)
+- [ ] Acciones: abrir en Finder, mover a papelera
+
+### Fase 4 - Optimizaciones
+- [ ] Caché de resultados de escaneo
+- [ ] Cancelación de escaneos en progreso
+- [ ] Filtros avanzados (extensiones, tamaño mínimo)
+- [ ] Export de resultados (CSV, JSON)
+
+## Arquitectura Implementada
+
+```
+DiskView (Swift UI)
+    ├── Disks Overview Tab
+    │   ├── All disks cards with metrics
+    │   └── Donut chart (usage visualization)
+    ├── Large Files Tab
+    │   └── [Pendiente: conectar con FileAnalyzer]
+    └── Duplicates Tab
+        └── [Pendiente: conectar con FileAnalyzer]
+
+FileAnalyzer (Rust Backend)
+    ├── analyze_directory() → DirectoryAnalysis
+    │   ├── Walk filesystem recursively
+    │   ├── Collect size by type
+    │   └── Return top N largest files
+    └── find_duplicates() → Vec<DuplicateGroup>
+        ├── Group by size (fast pre-filter)
+        ├── Hash files with same size
+        └── Return duplicate groups sorted by wasted space
+```
+
+## Notas Técnicas
+
+- **Hashing Strategy**: Blake3 con chunks para files >1MB (8KB×3)
+- **Performance**: O(n) para escaneo, O(n log n) para sorting
+- **Memory**: Eficiente, solo paths en memoria
+- **Compatibility**: macOS 14.4+ requerido para process tree, 14.0+ para charts
 

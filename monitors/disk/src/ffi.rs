@@ -91,7 +91,13 @@ pub extern "C" fn get_all_disks() -> *mut CDiskList {
 pub extern "C" fn get_primary_disk() -> *mut CDiskInfo {
     let disk = match DISK_MONITOR.lock() {
         Ok(monitor) => match monitor.get_primary_disk() {
-            Some(d) => d,
+            Some(d) => {
+                eprintln!("[DISK FFI] Primary disk: {} available, {} total, {:.2}% used",
+                    crate::disk_monitor::DiskMonitor::format_bytes(d.available_bytes),
+                    crate::disk_monitor::DiskMonitor::format_bytes(d.total_bytes),
+                    d.usage_percent);
+                d
+            },
             None => return std::ptr::null_mut(),
         },
         Err(_) => return std::ptr::null_mut(),

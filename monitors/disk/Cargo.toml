@@ -7,8 +7,16 @@ edition = { workspace = true }
 name = "reaper_disk_monitor"
 crate-type = ["staticlib", "cdylib"]
 
+[[bin]]
+name = "test_disk"
+path = "src/bin/test_disk.rs"
+
 [dependencies]
 reaper-core = { path = "../../core" }
 sysinfo = { workspace = true }
 serde = { workspace = true }
 once_cell = { workspace = true }
+blake3 = "1.5"
+
+[dev-dependencies]
+tempfile = "3.8"
