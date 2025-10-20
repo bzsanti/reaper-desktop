@@ -407,6 +407,33 @@ func get_process_bandwidth(_ pid: UInt32) -> CBandwidthStats
 @_silgen_name("refresh_network_data")
 func refresh_network_data()
 
+// MARK: - Disk Analysis FFI Declarations (v0.4.6)
+@_silgen_name("analyze_directory")
+func analyze_directory(
+    _ path: UnsafePointer<CChar>,
+    _ top_n: Int,
+    _ min_size: UInt64,
+    _ progress_callback: @escaping @convention(c) (Double) -> Void,
+    _ handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>
+) -> UnsafeMutablePointer<CDirectoryAnalysis>?
+
+@_silgen_name("find_duplicates")
+func find_duplicates(
+    _ path: UnsafePointer<CChar>,
+    _ min_size: UInt64,
+    _ progress_callback: @escaping @convention(c) (Double) -> Void,
+    _ handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>
+) -> UnsafeMutablePointer<CDuplicateGroupList>?
+
+@_silgen_name("cancel_analysis")
+func cancel_analysis(_ handle: UnsafeMutableRawPointer?)
+
+@_silgen_name("free_directory_analysis")
+func free_directory_analysis(_ ptr: UnsafeMutablePointer<CDirectoryAnalysis>?)
+
+@_silgen_name("free_duplicate_group_list")
+func free_duplicate_group_list(_ ptr: UnsafeMutablePointer<CDuplicateGroupList>?)
+
 // Disk monitor FFI functions
 @_silgen_name("disk_monitor_init")
 func disk_monitor_init()
@@ -646,6 +673,51 @@ struct CCpuLimitList {
     var count: Int
 }
 
+// MARK: - Disk Analysis C Structures (v0.4.6)
+
+struct CFileEntry {
+    var path: UnsafeMutablePointer<CChar>?
+    var size: UInt64
+    var category: UInt8
+    var modified: UInt64
+}
+
+struct CCategoryStats {
+    var documents_count: Int
+    var documents_size: UInt64
+    var media_count: Int
+    var media_size: UInt64
+    var code_count: Int
+    var code_size: UInt64
+    var archives_count: Int
+    var archives_size: UInt64
+    var system_count: Int
+    var system_size: UInt64
+    var other_count: Int
+    var other_size: UInt64
+}
+
+struct CDirectoryAnalysis {
+    var total_size: UInt64
+    var file_count: Int
+    var largest_files: UnsafeMutablePointer<CFileEntry>?
+    var largest_files_count: Int
+    var category_stats: CCategoryStats
+}
+
+struct CDuplicateGroup {
+    var hash: UnsafeMutablePointer<CChar>?
+    var files: UnsafeMutablePointer<CFileEntry>?
+    var files_count: Int
+    var total_size: UInt64
+    var wasted_space: UInt64
+}
+
+struct CDuplicateGroupList {
+    var groups: UnsafeMutablePointer<CDuplicateGroup>?
+    var count: Int
+}
+
 struct CpuLimitInfo: Identifiable {
     let id: UInt32
     let pid: UInt32
@@ -695,7 +767,7 @@ enum CPULimitPreset: CaseIterable {
     case medium     // 50%
     case low        // 25%
     case minimal    // 10%
-    
+
     var percentage: Float {
         switch self {
         case .high: return 75.0
@@ -704,7 +776,7 @@ enum CPULimitPreset: CaseIterable {
         case .minimal: return 10.0
         }
     }
-    
+
     var description: String {
         switch self {
         case .high: return "75% CPU"
@@ -712,6 +784,127 @@ enum CPULimitPreset: CaseIterable {
         case .low: return "25% CPU"
         case .minimal: return "10% CPU"
         }
+    }
+}
+
+// MARK: - Disk Analysis Swift Models (v0.4.6)
+
+enum FileCategory: UInt8, CaseIterable {
+    case documents = 0
+    case media = 1
+    case code = 2
+    case archives = 3
+    case system = 4
+    case other = 5
+
+    var displayName: String {
+        switch self {
+        case .documents: return "Documents"
+        case .media: return "Media"
+        case .code: return "Code"
+        case .archives: return "Archives"
+        case .system: return "System"
+        case .other: return "Other"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .documents: return "doc.text"
+        case .media: return "photo"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .archives: return "archivebox"
+        case .system: return "gear"
+        case .other: return "questionmark.folder"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .documents: return .blue
+        case .media: return .purple
+        case .code: return .green
+        case .archives: return .orange
+        case .system: return .red
+        case .other: return .gray
+        }
+    }
+}
+
+struct FileEntry: Identifiable {
+    let id = UUID()
+    let path: String
+    let size: UInt64
+    let category: FileCategory
+    let modified: Date
+
+    var sizeFormatted: String {
+        ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    var fileName: String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
+struct FileCategoryStats {
+    let documents: (count: Int, size: UInt64)
+    let media: (count: Int, size: UInt64)
+    let code: (count: Int, size: UInt64)
+    let archives: (count: Int, size: UInt64)
+    let system: (count: Int, size: UInt64)
+    let other: (count: Int, size: UInt64)
+
+    func getStats(for category: FileCategory) -> (count: Int, size: UInt64) {
+        switch category {
+        case .documents: return documents
+        case .media: return media
+        case .code: return code
+        case .archives: return archives
+        case .system: return system
+        case .other: return other
+        }
+    }
+
+    var totalSize: UInt64 {
+        documents.size + media.size + code.size +
+        archives.size + system.size + other.size
+    }
+
+    var totalCount: Int {
+        documents.count + media.count + code.count +
+        archives.count + system.count + other.count
+    }
+}
+
+struct DirectoryAnalysis {
+    let totalSize: UInt64
+    let fileCount: Int
+    let largestFiles: [FileEntry]
+    let categoryStats: FileCategoryStats
+
+    var totalSizeFormatted: String {
+        ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file)
+    }
+}
+
+struct DuplicateGroup: Identifiable {
+    let id = UUID()
+    let hash: String
+    let files: [FileEntry]
+    let totalSize: UInt64
+    let wastedSpace: UInt64
+
+    var totalSizeFormatted: String {
+        ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file)
+    }
+
+    var wastedSpaceFormatted: String {
+        ByteCountFormatter.string(fromByteCount: Int64(wastedSpace), countStyle: .file)
+    }
+
+    var duplicateCount: Int {
+        files.count - 1
     }
 }
 
@@ -1669,12 +1862,236 @@ class RustBridge: ObservableObject {
     
     // Public functions for high-frequency sampling
     func setHighFrequencySampling(_ enabled: Bool) {
-        let result = enabled ? 
-            Self.enable_high_frequency_sampling() : 
+        let result = enabled ?
+            Self.enable_high_frequency_sampling() :
             Self.disable_high_frequency_sampling()
-        
+
         if result == 0 {
             print("Failed to \(enabled ? "enable" : "disable") high-frequency sampling")
         }
+    }
+
+    // MARK: - Disk Analysis Methods (v0.4.6)
+
+    private var currentAnalysisHandle: UnsafeMutableRawPointer?
+
+    // Static storage for progress callbacks (thread-safe via lock)
+    nonisolated(unsafe) private static var progressCallbackLock = NSLock()
+    nonisolated(unsafe) private static var progressCallback: ((Double) -> Void)?
+
+    nonisolated(unsafe) private static let staticProgressCallback: @convention(c) (Double) -> Void = { progressValue in
+        progressCallbackLock.lock()
+        let callback = progressCallback
+        progressCallbackLock.unlock()
+
+        if let callback = callback {
+            Task { @MainActor in
+                callback(progressValue)
+            }
+        }
+    }
+
+    func analyzeDirectory(
+        path: String,
+        topN: Int = 100,
+        minSize: UInt64 = 1024 * 1024, // 1 MB
+        progress: @escaping (Double) -> Void
+    ) async throws -> DirectoryAnalysis {
+        return try await withCheckedThrowingContinuation { continuation in
+            // Store callback in static storage
+            Self.progressCallbackLock.lock()
+            Self.progressCallback = progress
+            Self.progressCallbackLock.unlock()
+
+            // Execute on background thread
+            Task.detached { [weak self] in
+                guard let self = self else {
+                    Self.progressCallbackLock.lock()
+                    Self.progressCallback = nil
+                    Self.progressCallbackLock.unlock()
+                    continuation.resume(throwing: NSError(domain: "RustBridge", code: -1, userInfo: [NSLocalizedDescriptionKey: "RustBridge deallocated"]))
+                    return
+                }
+
+                var handle: UnsafeMutableRawPointer?
+
+                let analysisPtr = path.withCString { pathPtr in
+                    withUnsafeMutablePointer(to: &handle) { handlePtr in
+                        analyze_directory(pathPtr, topN, minSize, Self.staticProgressCallback, handlePtr)
+                    }
+                }
+
+                // Store handle for cancellation (capture handle value before MainActor)
+                let handleValue = handle
+                await MainActor.run {
+                    self.currentAnalysisHandle = handleValue
+                }
+
+                // Clear callback
+                Self.progressCallbackLock.lock()
+                Self.progressCallback = nil
+                Self.progressCallbackLock.unlock()
+
+                guard let analysisPtr = analysisPtr else {
+                    continuation.resume(throwing: NSError(domain: "RustBridge", code: -2, userInfo: [NSLocalizedDescriptionKey: "Directory analysis failed"]))
+                    return
+                }
+
+                defer {
+                    free_directory_analysis(analysisPtr)
+                    Task { @MainActor in
+                        self.currentAnalysisHandle = nil
+                    }
+                }
+
+                let cAnalysis = analysisPtr.pointee
+
+                // Convert largest files
+                var largestFiles: [FileEntry] = []
+                if let filesPtr = cAnalysis.largest_files, cAnalysis.largest_files_count > 0 {
+                    for i in 0..<cAnalysis.largest_files_count {
+                        let cFile = filesPtr[i]
+
+                        if let file = self.convertFileEntry(cFile) {
+                            largestFiles.append(file)
+                        }
+                    }
+                }
+
+                // Convert category stats
+                let categoryStats = FileCategoryStats(
+                    documents: (count: cAnalysis.category_stats.documents_count, size: cAnalysis.category_stats.documents_size),
+                    media: (count: cAnalysis.category_stats.media_count, size: cAnalysis.category_stats.media_size),
+                    code: (count: cAnalysis.category_stats.code_count, size: cAnalysis.category_stats.code_size),
+                    archives: (count: cAnalysis.category_stats.archives_count, size: cAnalysis.category_stats.archives_size),
+                    system: (count: cAnalysis.category_stats.system_count, size: cAnalysis.category_stats.system_size),
+                    other: (count: cAnalysis.category_stats.other_count, size: cAnalysis.category_stats.other_size)
+                )
+
+                let analysis = DirectoryAnalysis(
+                    totalSize: cAnalysis.total_size,
+                    fileCount: cAnalysis.file_count,
+                    largestFiles: largestFiles,
+                    categoryStats: categoryStats
+                )
+
+                continuation.resume(returning: analysis)
+            }
+        }
+    }
+
+    func findDuplicates(
+        path: String,
+        minSize: UInt64 = 1024 * 1024, // 1 MB
+        progress: @escaping (Double) -> Void
+    ) async throws -> [DuplicateGroup] {
+        return try await withCheckedThrowingContinuation { continuation in
+            // Store callback in static storage
+            Self.progressCallbackLock.lock()
+            Self.progressCallback = progress
+            Self.progressCallbackLock.unlock()
+
+            // Execute on background thread
+            Task.detached { [weak self] in
+                guard let self = self else {
+                    Self.progressCallbackLock.lock()
+                    Self.progressCallback = nil
+                    Self.progressCallbackLock.unlock()
+                    continuation.resume(throwing: NSError(domain: "RustBridge", code: -1, userInfo: [NSLocalizedDescriptionKey: "RustBridge deallocated"]))
+                    return
+                }
+
+                var handle: UnsafeMutableRawPointer?
+
+                let listPtr = path.withCString { pathPtr in
+                    withUnsafeMutablePointer(to: &handle) { handlePtr in
+                        find_duplicates(pathPtr, minSize, Self.staticProgressCallback, handlePtr)
+                    }
+                }
+
+                // Store handle for cancellation (capture handle value before MainActor)
+                let handleValue = handle
+                await MainActor.run {
+                    self.currentAnalysisHandle = handleValue
+                }
+
+                // Clear callback
+                Self.progressCallbackLock.lock()
+                Self.progressCallback = nil
+                Self.progressCallbackLock.unlock()
+
+                guard let listPtr = listPtr else {
+                    continuation.resume(throwing: NSError(domain: "RustBridge", code: -2, userInfo: [NSLocalizedDescriptionKey: "Duplicate detection failed"]))
+                    return
+                }
+
+                defer {
+                    free_duplicate_group_list(listPtr)
+                    Task { @MainActor in
+                        self.currentAnalysisHandle = nil
+                    }
+                }
+
+                let cList = listPtr.pointee
+                var duplicateGroups: [DuplicateGroup] = []
+
+                if let groupsPtr = cList.groups, cList.count > 0 {
+                    for i in 0..<cList.count {
+                        let cGroup = groupsPtr[i]
+
+                        let hash = self.safeStringFromCString(cGroup.hash)
+
+                        // Convert files in group
+                        var files: [FileEntry] = []
+                        if let filesPtr = cGroup.files, cGroup.files_count > 0 {
+                            for j in 0..<cGroup.files_count {
+                                let cFile = filesPtr[j]
+
+                                if let file = self.convertFileEntry(cFile) {
+                                    files.append(file)
+                                }
+                            }
+                        }
+
+                        let group = DuplicateGroup(
+                            hash: hash,
+                            files: files,
+                            totalSize: cGroup.total_size,
+                            wastedSpace: cGroup.wasted_space
+                        )
+
+                        duplicateGroups.append(group)
+                    }
+                }
+
+                continuation.resume(returning: duplicateGroups)
+            }
+        }
+    }
+
+    func cancelCurrentAnalysis() {
+        if let handle = currentAnalysisHandle {
+            cancel_analysis(handle)
+            currentAnalysisHandle = nil
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    nonisolated private func convertFileEntry(_ cFile: CFileEntry) -> FileEntry? {
+        let path = safeStringFromCString(cFile.path)
+
+        guard let category = FileCategory(rawValue: cFile.category) else {
+            return nil
+        }
+
+        let modified = Date(timeIntervalSince1970: TimeInterval(cFile.modified))
+
+        return FileEntry(
+            path: path,
+            size: cFile.size,
+            category: category,
+            modified: modified
+        )
     }
 }
