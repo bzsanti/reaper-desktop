@@ -141,9 +141,14 @@ struct DiskView: View {
         VStack(spacing: 0) {
             // Scan controls
             HStack {
-                TextField("Enter path to scan (e.g., /Users/YourName/Documents)", text: $scanningPath)
+                TextField("Select a folder to scan", text: $scanningPath)
                     .textFieldStyle(.roundedBorder)
                     .disabled(viewModel.isScanning)
+
+                Button("Browse...") {
+                    selectFolder()
+                }
+                .disabled(viewModel.isScanning)
 
                 Button(viewModel.isScanning ? "Scanning..." : "Scan Directory") {
                     Task {
@@ -317,9 +322,14 @@ struct DiskView: View {
         VStack(spacing: 0) {
             // Scan controls
             HStack {
-                TextField("Enter path to search (e.g., /Users/YourName/Documents)", text: $scanningPath)
+                TextField("Select a folder to search", text: $scanningPath)
                     .textFieldStyle(.roundedBorder)
                     .disabled(viewModel.isScanning)
+
+                Button("Browse...") {
+                    selectFolder()
+                }
+                .disabled(viewModel.isScanning)
 
                 Button(viewModel.isScanning ? "Searching..." : "Find Duplicates") {
                     Task {
@@ -834,6 +844,22 @@ struct DiskView: View {
             return .orange
         default:
             return .red
+        }
+    }
+
+    func selectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.message = "Select a folder to scan"
+        panel.prompt = "Select"
+
+        if panel.runModal() == .OK {
+            if let url = panel.url {
+                scanningPath = url.path
+            }
         }
     }
 }

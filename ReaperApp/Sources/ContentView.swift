@@ -10,7 +10,7 @@ struct ContentView: View {
     
     // Version info
     private let appVersion = "0.4.7"  // Disk module expansion - Phase 1
-    private let buildVersion = "20251001231727"  // Unique build timestamp
+    private let buildVersion = "20251020135023"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {

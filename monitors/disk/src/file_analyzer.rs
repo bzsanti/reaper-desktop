@@ -1,11 +1,23 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration, Instant};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::RwLock;
+use rayon::prelude::*;
+
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::MetadataExt;
+
+// Memory and performance limits
+#[allow(dead_code)] // Reserved for future memory limit enforcement
+const MAX_FILES_IN_MEMORY: usize = 100_000;
+#[allow(dead_code)] // Currently used in HashCache insert logic
+const MAX_CACHE_SIZE: usize = 10_000;
+const SCAN_TIMEOUT_SECS: u64 = 300; // 5 minutes
+const HASH_CHUNK_SIZE: usize = 8192;
 
 #[derive(Debug, Clone)]
 pub struct FileEntry {
@@ -90,8 +102,11 @@ impl HashCache {
     pub fn insert(&self, path: PathBuf, modified: SystemTime, hash: String) {
         let mut cache = self.cache.write();
 
-        // Simple cache eviction: clear if too large
+        // Memory limit enforcement: Clear cache if it exceeds max size
+        // Simple eviction strategy to prevent unbounded memory growth
         if cache.len() >= self.max_entries {
+            // Clear cache when limit is reached
+            // In a production system, this could use a proper LRU cache
             cache.clear();
         }
 
@@ -150,15 +165,31 @@ impl FileAnalyzer {
     /// Default system paths that should be excluded from scanning on macOS
     fn default_excluded_paths() -> Vec<PathBuf> {
         vec![
+            // Critical system directories
             PathBuf::from("/System"),
             PathBuf::from("/private"),
             PathBuf::from("/dev"),
             PathBuf::from("/proc"),
             PathBuf::from("/sys"),
             PathBuf::from("/cores"),
+            PathBuf::from("/var"),
+            // Volumes and network
             PathBuf::from("/Volumes"),
+            PathBuf::from("/Network"),
+            // macOS-specific metadata
+            PathBuf::from("/.Spotlight-V100"),
+            PathBuf::from("/.DocumentRevisions-V100"),
+            PathBuf::from("/.fseventsd"),
+            PathBuf::from("/.TemporaryItems"),
+            PathBuf::from("/.Trashes"),
+            PathBuf::from("/.vol"),
+            // Cache directories
             PathBuf::from("/Library/Caches"),
             PathBuf::from("/Library/Logs"),
+            PathBuf::from("/System/Library/Caches"),
+            // Time Machine
+            PathBuf::from("/.MobileBackups"),
+            PathBuf::from("/Backups.backupdb"),
         ]
     }
 
@@ -207,6 +238,32 @@ impl FileAnalyzer {
         false
     }
 
+    /// Validate that a path is safe and within the allowed root directory
+    /// Prevents path traversal attacks and validates symlinks
+    #[allow(dead_code)] // Reserved for future enhanced security validation
+    fn is_safe_path(&self, path: &Path, root: &Path) -> bool {
+        // First check: Ensure path is not in exclusion list
+        if self.is_path_excluded(path) {
+            return false;
+        }
+
+        // Second check: Canonicalize and verify it's within root directory
+        match path.canonicalize() {
+            Ok(canonical) => {
+                // Ensure canonical path starts with root
+                match root.canonicalize() {
+                    Ok(canonical_root) => canonical.starts_with(canonical_root),
+                    Err(_) => false, // Root doesn't exist or no permission (fail-safe: deny)
+                }
+            }
+            Err(_) => {
+                // Cannot canonicalize - either doesn't exist or no permission
+                // Fail-safe: deny access
+                false
+            }
+        }
+    }
+
     /// Check path permissions and validity
     /// Returns Ok(()) if path is safe to access, Err otherwise
     #[allow(dead_code)] // Reserved for future use and external API
@@ -232,6 +289,64 @@ impl FileAnalyzer {
             }
             visited.push(canonical);
         }
+        false
+    }
+
+    /// Check if a file is a cloud storage placeholder (OneDrive, iCloud, Dropbox, etc.)
+    /// These files have metadata but the actual content is not downloaded locally
+    fn is_cloud_placeholder(&self, path: &Path, metadata: &fs::Metadata) -> bool {
+        // Skip directories
+        if metadata.is_dir() {
+            return false;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, cloud files have special characteristics:
+            // 1. OneDrive: Files in OneDrive folders with size 0 or very small
+            // 2. iCloud: Files with .icloud extension or in CloudDocs
+            // 3. Check for common cloud storage paths
+
+            let path_str = path.to_string_lossy();
+
+            // Check for OneDrive placeholder patterns
+            if path_str.contains("/OneDrive") || path_str.contains("/OneDrive - ") {
+                // OneDrive placeholders often have 0 size or very small size (just metadata)
+                // Real files should have substantial size
+                if metadata.len() < 100 {
+                    return true;
+                }
+
+                // OneDrive uses special file attributes - check for unusual block count
+                // Placeholder files have blocks == 0 while real files have blocks > 0
+                if metadata.blocks() == 0 && metadata.len() > 0 {
+                    return true;
+                }
+            }
+
+            // Check for iCloud placeholder files (.icloud extension)
+            if let Some(extension) = path.extension() {
+                if extension == "icloud" {
+                    return true;
+                }
+            }
+
+            // Check for iCloud Drive paths
+            if path_str.contains("/Library/Mobile Documents/com~apple~CloudDocs") {
+                // iCloud files with 0 blocks are not downloaded
+                if metadata.blocks() == 0 && metadata.len() > 0 {
+                    return true;
+                }
+            }
+
+            // Check for Dropbox smart sync placeholders
+            if path_str.contains("/Dropbox") {
+                if metadata.blocks() == 0 && metadata.len() > 0 {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
@@ -359,6 +474,9 @@ impl FileAnalyzer {
         let files_processed = Arc::new(AtomicUsize::new(0));
         let bytes_processed = Arc::new(AtomicUsize::new(0));
 
+        // Start timeout timer
+        let start_time = Instant::now();
+
         self.walk_directory_cancellable(
             path,
             0,
@@ -400,6 +518,7 @@ impl FileAnalyzer {
                 }
             },
             cancel_flag.clone(),
+            start_time,
         )?;
 
         // Check if cancelled
@@ -490,6 +609,9 @@ impl FileAnalyzer {
         let files_processed = Arc::new(AtomicUsize::new(0));
         let bytes_processed = Arc::new(AtomicUsize::new(0));
 
+        // Start timeout timer
+        let start_time = Instant::now();
+
         // First pass: group by size
         self.walk_directory_cancellable(
             path,
@@ -510,45 +632,81 @@ impl FileAnalyzer {
                 }
             },
             cancel_flag.clone(),
+            start_time,
         )?;
 
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
         }
 
-        // Second pass: hash files with same size
+        // Check timeout
+        if start_time.elapsed() > Duration::from_secs(SCAN_TIMEOUT_SECS) {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "Scan exceeded time limit"));
+        }
+
+        // Second pass: hash files with same size (PARALLELIZED with rayon)
         let mut duplicates = Vec::new();
         let total_to_hash: usize = files_by_size.values().filter(|v| v.len() >= 2).map(|v| v.len()).sum();
         let hashed = Arc::new(AtomicUsize::new(0));
+
+        // Notify start of hashing phase with special marker
+        // We use count = total files scanned, bytes = 0xFFFFFFFF to signal phase transition
+        if let Some(ref callback) = progress_callback {
+            let total_scanned = files_processed.load(Ordering::Relaxed);
+            callback(total_scanned, 0xFFFFFFFF);
+        }
 
         for (size, paths) in files_by_size.iter() {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
             }
 
+            // Check timeout periodically
+            if start_time.elapsed() > Duration::from_secs(SCAN_TIMEOUT_SECS) {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Scan exceeded time limit"));
+            }
+
             if paths.len() < 2 {
                 continue;
             }
 
+            // PARALLEL HASHING: Use rayon to hash files in parallel
+            let hash_results: Vec<_> = paths
+                .par_iter()
+                .filter_map(|path| {
+                    // Check cancellation in parallel workers
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        return None;
+                    }
+
+                    // Hash the file
+                    match self.hash_file_fast(path) {
+                        Ok(hash) => {
+                            let count = hashed.fetch_add(1, Ordering::Relaxed) + 1;
+                            if let Some(ref callback) = progress_callback {
+                                if count % 10 == 0 {
+                                    // Send: current_hashed | (total_to_hash << 32) as special encoding
+                                    // This allows Swift to know both current and total
+                                    let progress_info = ((total_to_hash as u64) << 32) | (count as u64);
+                                    callback(count, progress_info);
+                                }
+                            }
+                            Some((hash, path.clone()))
+                        }
+                        Err(_) => None, // Skip files that can't be hashed (fail-safe)
+                    }
+                })
+                .collect();
+
+            // Check if operation was cancelled during parallel hashing
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
+            }
+
             // Group by hash
             let mut by_hash: HashMap<String, Vec<PathBuf>> = HashMap::new();
-
-            for path in paths {
-                if cancel_flag.load(Ordering::Relaxed) {
-                    return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
-                }
-
-                if let Ok(hash) = self.hash_file_fast(path) {
-                    by_hash.entry(hash).or_insert_with(Vec::new).push(path.clone());
-                }
-
-                let count = hashed.fetch_add(1, Ordering::Relaxed) + 1;
-                if let Some(ref callback) = progress_callback {
-                    if count % 10 == 0 {
-                        let bytes = bytes_processed.load(Ordering::Relaxed) as u64;
-                        callback(count * 100 / total_to_hash.max(1), bytes);
-                    }
-                }
+            for (hash, path) in hash_results {
+                by_hash.entry(hash).or_insert_with(Vec::new).push(path);
             }
 
             // Identify duplicate groups
@@ -624,6 +782,11 @@ impl FileAnalyzer {
                 continue;
             }
 
+            // Skip cloud storage placeholder files (OneDrive, iCloud, Dropbox, etc.)
+            if !is_dir && self.is_cloud_placeholder(&path, &metadata) {
+                continue;
+            }
+
             let size = metadata.len();
             let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
@@ -655,13 +818,14 @@ impl FileAnalyzer {
         Ok(())
     }
 
-    /// Walk directory recursively with cancellation support
+    /// Walk directory recursively with cancellation support and timeout
     fn walk_directory_cancellable<F>(
         &self,
         path: &Path,
         depth: usize,
         callback: &mut F,
         cancel_flag: Arc<AtomicBool>,
+        start_time: Instant,
     ) -> io::Result<()>
     where
         F: FnMut(FileEntry),
@@ -669,6 +833,11 @@ impl FileAnalyzer {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
+        }
+
+        // Check for timeout (fail-safe: deny operation if timeout exceeded)
+        if start_time.elapsed() > Duration::from_secs(SCAN_TIMEOUT_SECS) {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "Scan exceeded time limit"));
         }
 
         if depth > self.max_depth {
@@ -691,9 +860,14 @@ impl FileAnalyzer {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Operation cancelled"));
             }
 
+            // Periodic timeout check
+            if start_time.elapsed() > Duration::from_secs(SCAN_TIMEOUT_SECS) {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "Scan exceeded time limit"));
+            }
+
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(_) => continue, // Skip entries we can't read (fail-safe)
             };
 
             let path = entry.path();
@@ -716,6 +890,11 @@ impl FileAnalyzer {
 
             // Security: Skip symlinks if not following them (prevent circular symlinks)
             if !self.follow_symlinks && metadata.file_type().is_symlink() {
+                continue;
+            }
+
+            // Skip cloud storage placeholder files (OneDrive, iCloud, Dropbox, etc.)
+            if !is_dir && self.is_cloud_placeholder(&path, &metadata) {
                 continue;
             }
 
@@ -743,7 +922,7 @@ impl FileAnalyzer {
 
             // Recurse into directories
             if is_dir {
-                let _ = self.walk_directory_cancellable(&path, depth + 1, callback, cancel_flag.clone());
+                let _ = self.walk_directory_cancellable(&path, depth + 1, callback, cancel_flag.clone(), start_time);
             }
         }
 
@@ -752,6 +931,7 @@ impl FileAnalyzer {
 
     /// Fast file hashing using first/middle/last chunks with optional caching
     /// This is much faster than hashing the entire file for large files
+    /// Thread-safe for use with rayon parallel iterators
     fn hash_file_fast(&self, path: &Path) -> io::Result<String> {
         use std::io::Read;
 
@@ -759,7 +939,7 @@ impl FileAnalyzer {
         let file_size = metadata.len();
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
-        // Check cache first
+        // Check cache first (thread-safe access)
         if let Some(ref cache) = self.hash_cache {
             if let Some(cached_hash) = cache.get(path, modified) {
                 return Ok(cached_hash);
@@ -770,29 +950,28 @@ impl FileAnalyzer {
         let hash = if file_size < 1_048_576 {
             self.hash_file_full(path)?
         } else {
-            // For large files, hash first 8KB, middle 8KB, and last 8KB
+            // For large files, hash first/middle/last chunks for speed
             let mut file = fs::File::open(path)?;
-            let chunk_size = 8192;
             let mut hasher = blake3::Hasher::new();
 
             // First chunk
-            let mut buffer = vec![0u8; chunk_size];
+            let mut buffer = vec![0u8; HASH_CHUNK_SIZE];
             let n = file.read(&mut buffer)?;
             hasher.update(&buffer[..n]);
 
             // Middle chunk
-            if file_size > chunk_size as u64 * 2 {
+            if file_size > HASH_CHUNK_SIZE as u64 * 2 {
                 use std::io::Seek;
-                let middle = file_size / 2 - (chunk_size as u64 / 2);
+                let middle = file_size / 2 - (HASH_CHUNK_SIZE as u64 / 2);
                 file.seek(std::io::SeekFrom::Start(middle))?;
                 let n = file.read(&mut buffer)?;
                 hasher.update(&buffer[..n]);
             }
 
             // Last chunk
-            if file_size > chunk_size as u64 {
+            if file_size > HASH_CHUNK_SIZE as u64 {
                 use std::io::Seek;
-                let last_pos = file_size.saturating_sub(chunk_size as u64);
+                let last_pos = file_size.saturating_sub(HASH_CHUNK_SIZE as u64);
                 file.seek(std::io::SeekFrom::Start(last_pos))?;
                 let n = file.read(&mut buffer)?;
                 hasher.update(&buffer[..n]);
@@ -801,7 +980,7 @@ impl FileAnalyzer {
             hasher.finalize().to_hex().to_string()
         };
 
-        // Store in cache
+        // Store in cache (thread-safe write)
         if let Some(ref cache) = self.hash_cache {
             cache.insert(path.to_path_buf(), modified, hash.clone());
         }
@@ -842,7 +1021,8 @@ mod tests {
         let mut file2 = File::create(temp_path.join("small.txt")).unwrap();
         file2.write_all(b"hello").unwrap();
 
-        let analyzer = FileAnalyzer::new();
+        // Use analyzer with empty excluded paths for testing
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
         let analysis = analyzer.analyze_directory(temp_path, 10).unwrap();
 
         assert_eq!(analysis.file_count, 2);
@@ -866,10 +1046,334 @@ mod tests {
         let mut file3 = File::create(temp_path.join("unique.txt")).unwrap();
         file3.write_all(b"different content").unwrap();
 
-        let analyzer = FileAnalyzer::new();
+        // Use analyzer with empty excluded paths for testing
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
         let duplicates = analyzer.find_duplicates(temp_path).unwrap();
 
         assert_eq!(duplicates.len(), 1);
         assert_eq!(duplicates[0].files.len(), 2);
+    }
+
+    #[test]
+    fn test_cancelation() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a few files
+        for i in 0..10 {
+            std::fs::write(
+                temp_dir.path().join(format!("file{}.txt", i)),
+                format!("content {}", i)
+            ).unwrap();
+        }
+
+        // Test that cancellation flag is checked
+        let cancel_flag = Arc::new(AtomicBool::new(true)); // Pre-cancelled
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
+
+        let result = analyzer.analyze_directory_with_progress(
+            temp_dir.path(),
+            100,
+            None,
+            cancel_flag
+        );
+
+        // Should be interrupted immediately since flag is pre-set
+        assert!(result.is_err(), "Analysis should be cancelled");
+        if let Err(e) = result {
+            assert_eq!(e.kind(), io::ErrorKind::Interrupted);
+        }
+    }
+
+    #[test]
+    fn test_progress_callback() {
+        let temp_dir = TempDir::new().unwrap();
+        let progress_calls = Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+        // Create enough files to trigger progress callback (callback fires every 100 files)
+        for i in 0..150 {
+            std::fs::write(
+                temp_dir.path().join(format!("file{}.txt", i)),
+                vec![0u8; 1024]
+            ).unwrap();
+        }
+
+        let progress_clone = progress_calls.clone();
+        let callback: ProgressCallback = Arc::new(move |current, total| {
+            progress_clone.lock().push((current, total));
+        });
+
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        let _result = analyzer.analyze_directory_with_progress(
+            temp_dir.path(),
+            10,
+            Some(callback),
+            cancel_flag
+        );
+
+        let calls = progress_calls.lock();
+        assert!(!calls.is_empty(), "Progress callback should be called");
+        // Verify that progress values are reasonable
+        for (count, bytes) in calls.iter() {
+            assert!(*count > 0, "Progress count should be positive");
+            assert!(*bytes > 0, "Progress bytes should be positive");
+        }
+    }
+
+    #[test]
+    fn test_file_categorization() {
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("test.pdf")), FileCategory::Documents);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("photo.jpg")), FileCategory::Media);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("video.mp4")), FileCategory::Media);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("song.mp3")), FileCategory::Media);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("script.rs")), FileCategory::Code);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("script.py")), FileCategory::Code);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("data.json")), FileCategory::Code);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("archive.zip")), FileCategory::Archives);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("archive.tar")), FileCategory::Archives);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("app.exe")), FileCategory::Applications);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("random.xyz")), FileCategory::Other);
+        assert_eq!(FileAnalyzer::categorize_file_type(Path::new("no_ext")), FileCategory::Other);
+    }
+
+    #[test]
+    fn test_hash_cache() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"test content").unwrap();
+
+        let cache = HashCache::new(100);
+        let metadata = std::fs::metadata(&file_path).unwrap();
+        let modified = metadata.modified().unwrap();
+
+        // First call should compute hash
+        let hash1 = "test_hash".to_string();
+        cache.insert(file_path.clone(), modified, hash1.clone());
+
+        // Second call should use cache
+        let hash2 = cache.get(&file_path, modified).unwrap();
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(cache.len(), 1);
+        assert!(!cache.is_empty());
+    }
+
+    #[test]
+    fn test_hash_cache_eviction() {
+        let cache = HashCache::new(3);
+        let temp_dir = TempDir::new().unwrap();
+
+        // Add 3 entries (within limit)
+        for i in 0..3 {
+            let path = temp_dir.path().join(format!("file{}.txt", i));
+            std::fs::write(&path, format!("content {}", i)).unwrap();
+            let metadata = std::fs::metadata(&path).unwrap();
+            cache.insert(path, metadata.modified().unwrap(), format!("hash{}", i));
+        }
+
+        assert_eq!(cache.len(), 3);
+
+        // Add one more entry (exceeds limit, should trigger eviction)
+        let path = temp_dir.path().join("file3.txt");
+        std::fs::write(&path, "content 3").unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        cache.insert(path.clone(), metadata.modified().unwrap(), "hash3".to_string());
+
+        // Cache should have been cleared and only new entry added
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn test_hash_cache_clear() {
+        let cache = HashCache::new(100);
+        let temp_dir = TempDir::new().unwrap();
+
+        let path = temp_dir.path().join("test.txt");
+        std::fs::write(&path, b"content").unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+
+        cache.insert(path, metadata.modified().unwrap(), "hash".to_string());
+        assert_eq!(cache.len(), 1);
+
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_security_path_validation() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
+
+        // Safe path within root
+        let safe_path = root.join("subdir").join("file.txt");
+        std::fs::create_dir_all(safe_path.parent().unwrap()).unwrap();
+        std::fs::write(&safe_path, b"test").unwrap();
+        assert!(analyzer.is_safe_path(&safe_path, root));
+
+        // Path outside root should be unsafe
+        let outside_path = PathBuf::from("/tmp/outside");
+        assert!(!analyzer.is_safe_path(&outside_path, root));
+    }
+
+    #[test]
+    fn test_excluded_paths() {
+        let analyzer = FileAnalyzer::new();
+
+        // Test default excluded paths (macOS system directories)
+        assert!(analyzer.is_path_excluded(Path::new("/System/Library")));
+        assert!(analyzer.is_path_excluded(Path::new("/private/var/log")));
+        assert!(analyzer.is_path_excluded(Path::new("/dev/null")));
+        assert!(analyzer.is_path_excluded(Path::new("/.Spotlight-V100/data")));
+        assert!(analyzer.is_path_excluded(Path::new("/.DocumentRevisions-V100")));
+
+        // Test non-excluded paths
+        assert!(!analyzer.is_path_excluded(Path::new("/Users/test/Documents")));
+        assert!(!analyzer.is_path_excluded(Path::new("/Applications")));
+    }
+
+    #[test]
+    fn test_custom_excluded_paths() {
+        let custom_paths = vec![
+            PathBuf::from("/custom/excluded"),
+            PathBuf::from("/another/excluded"),
+        ];
+
+        let analyzer = FileAnalyzer::new().with_excluded_paths(custom_paths);
+
+        assert!(analyzer.is_path_excluded(Path::new("/custom/excluded/file.txt")));
+        assert!(analyzer.is_path_excluded(Path::new("/another/excluded/subdir")));
+        assert!(!analyzer.is_path_excluded(Path::new("/custom/allowed")));
+    }
+
+    #[test]
+    fn test_category_stats() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create files of different categories
+        std::fs::write(temp_dir.path().join("doc1.pdf"), vec![0u8; 1024]).unwrap();
+        std::fs::write(temp_dir.path().join("doc2.txt"), vec![0u8; 512]).unwrap();
+        std::fs::write(temp_dir.path().join("image.jpg"), vec![0u8; 2048]).unwrap();
+        std::fs::write(temp_dir.path().join("code.rs"), vec![0u8; 256]).unwrap();
+
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
+        let analysis = analyzer.analyze_directory(temp_dir.path(), 10).unwrap();
+
+        // Verify category stats exist
+        assert!(analysis.category_stats.contains_key(&FileCategory::Documents));
+        assert!(analysis.category_stats.contains_key(&FileCategory::Media));
+        assert!(analysis.category_stats.contains_key(&FileCategory::Code));
+
+        // Verify document category stats
+        let doc_stats = &analysis.category_stats[&FileCategory::Documents];
+        assert_eq!(doc_stats.file_count, 2);
+        assert_eq!(doc_stats.total_size, 1536); // 1024 + 512
+
+        // Verify media category stats
+        let media_stats = &analysis.category_stats[&FileCategory::Media];
+        assert_eq!(media_stats.file_count, 1);
+        assert_eq!(media_stats.total_size, 2048);
+    }
+
+    #[test]
+    fn test_duplicate_detection_with_progress() {
+        let temp_dir = TempDir::new().unwrap();
+        let progress_calls = Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+        // Create enough duplicate files to trigger progress callback (fires every 10 hashes)
+        let content = b"duplicate content for testing";
+        for i in 0..15 {
+            std::fs::write(
+                temp_dir.path().join(format!("dup{}.txt", i)),
+                content
+            ).unwrap();
+        }
+
+        // Create unique files to have multiple groups
+        for i in 0..5 {
+            std::fs::write(
+                temp_dir.path().join(format!("unique{}.txt", i)),
+                format!("unique content {}", i)
+            ).unwrap();
+        }
+
+        let progress_clone = progress_calls.clone();
+        let callback: ProgressCallback = Arc::new(move |current, _total| {
+            progress_clone.lock().push(current);
+        });
+
+        let analyzer = FileAnalyzer::new()
+            .with_excluded_paths(vec![])
+            .enable_default_cache();
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let duplicates = analyzer.find_duplicates_with_progress(
+            temp_dir.path(),
+            Some(callback),
+            cancel_flag
+        ).unwrap();
+
+        // Verify duplicates found
+        assert_eq!(duplicates.len(), 1);
+        assert_eq!(duplicates[0].files.len(), 15);
+
+        // Verify progress was reported (with enough files, callback should fire)
+        let calls = progress_calls.lock();
+        assert!(!calls.is_empty(), "Progress callback should be called during duplicate detection");
+    }
+
+    #[test]
+    fn test_min_file_size_filter() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create files of different sizes
+        std::fs::write(temp_dir.path().join("small.txt"), vec![0u8; 100]).unwrap();
+        std::fs::write(temp_dir.path().join("medium.txt"), vec![0u8; 1000]).unwrap();
+        std::fs::write(temp_dir.path().join("large.txt"), vec![0u8; 10000]).unwrap();
+
+        // Analyze with minimum size filter
+        let analyzer = FileAnalyzer::new()
+            .with_excluded_paths(vec![])
+            .with_min_file_size(500);
+
+        let analysis = analyzer.analyze_directory(temp_dir.path(), 10).unwrap();
+
+        // Total count includes all files
+        assert_eq!(analysis.file_count, 3);
+
+        // Largest files should only include files >= 500 bytes
+        assert_eq!(analysis.largest_files.len(), 2);
+        assert!(analysis.largest_files.iter().all(|f| f.size_bytes >= 500));
+    }
+
+    #[test]
+    fn test_timeout_protection() {
+        // This test verifies that the timeout mechanism exists
+        // We can't easily test the actual timeout without creating a massive directory structure
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a few files
+        for i in 0..5 {
+            std::fs::write(
+                temp_dir.path().join(format!("file{}.txt", i)),
+                vec![0u8; 100]
+            ).unwrap();
+        }
+
+        let analyzer = FileAnalyzer::new().with_excluded_paths(vec![]);
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        // Should complete without timeout
+        let result = analyzer.analyze_directory_with_progress(
+            temp_dir.path(),
+            10,
+            None,
+            cancel_flag
+        );
+
+        assert!(result.is_ok());
     }
 }

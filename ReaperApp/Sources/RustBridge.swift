@@ -412,21 +412,18 @@ func refresh_network_data()
 func analyze_directory(
     _ path: UnsafePointer<CChar>,
     _ top_n: Int,
-    _ min_size: UInt64,
-    _ progress_callback: @escaping @convention(c) (Double) -> Void,
-    _ handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>
+    _ progress_callback: (@convention(c) (Int, UInt64) -> Void)?
 ) -> UnsafeMutablePointer<CDirectoryAnalysis>?
 
 @_silgen_name("find_duplicates")
 func find_duplicates(
     _ path: UnsafePointer<CChar>,
     _ min_size: UInt64,
-    _ progress_callback: @escaping @convention(c) (Double) -> Void,
-    _ handle: UnsafeMutablePointer<UnsafeMutableRawPointer?>
+    _ progress_callback: (@convention(c) (Int, UInt64) -> Void)?
 ) -> UnsafeMutablePointer<CDuplicateGroupList>?
 
 @_silgen_name("cancel_analysis")
-func cancel_analysis(_ handle: UnsafeMutableRawPointer?)
+func cancel_analysis()
 
 @_silgen_name("free_directory_analysis")
 func free_directory_analysis(_ ptr: UnsafeMutablePointer<CDirectoryAnalysis>?)
@@ -675,42 +672,47 @@ struct CCpuLimitList {
 
 // MARK: - Disk Analysis C Structures (v0.4.6)
 
+// MARK: - C FFI Structures (must match Rust exactly)
+
 struct CFileEntry {
     var path: UnsafeMutablePointer<CChar>?
-    var size: UInt64
-    var category: UInt8
-    var modified: UInt64
+    var size_bytes: UInt64
+    var is_dir: UInt8
+    var modified_timestamp: UInt64
+    var file_type: UnsafeMutablePointer<CChar>?
 }
 
-struct CCategoryStats {
-    var documents_count: Int
-    var documents_size: UInt64
-    var media_count: Int
-    var media_size: UInt64
-    var code_count: Int
-    var code_size: UInt64
-    var archives_count: Int
-    var archives_size: UInt64
-    var system_count: Int
-    var system_size: UInt64
-    var other_count: Int
-    var other_size: UInt64
+struct CFileEntryList {
+    var entries: UnsafeMutablePointer<CFileEntry>?
+    var count: Int
+}
+
+struct CFileCategoryStats {
+    var category: UInt8
+    var total_size: UInt64
+    var file_count: Int
+}
+
+struct CCategoryStatsList {
+    var stats: UnsafeMutablePointer<CFileCategoryStats>?
+    var count: Int
 }
 
 struct CDirectoryAnalysis {
+    var path: UnsafeMutablePointer<CChar>?
     var total_size: UInt64
     var file_count: Int
-    var largest_files: UnsafeMutablePointer<CFileEntry>?
-    var largest_files_count: Int
-    var category_stats: CCategoryStats
+    var dir_count: Int
+    var largest_files: UnsafeMutablePointer<CFileEntryList>?
+    var category_stats: UnsafeMutablePointer<CCategoryStatsList>?
 }
 
 struct CDuplicateGroup {
     var hash: UnsafeMutablePointer<CChar>?
-    var files: UnsafeMutablePointer<CFileEntry>?
-    var files_count: Int
-    var total_size: UInt64
-    var wasted_space: UInt64
+    var size_bytes: UInt64
+    var files: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var file_count: Int
+    var total_wasted_space: UInt64
 }
 
 struct CDuplicateGroupList {
@@ -848,12 +850,12 @@ struct FileEntry: Identifiable {
 }
 
 struct FileCategoryStats {
-    let documents: (count: Int, size: UInt64)
-    let media: (count: Int, size: UInt64)
-    let code: (count: Int, size: UInt64)
-    let archives: (count: Int, size: UInt64)
-    let system: (count: Int, size: UInt64)
-    let other: (count: Int, size: UInt64)
+    var documents: (count: Int, size: UInt64)
+    var media: (count: Int, size: UInt64)
+    var code: (count: Int, size: UInt64)
+    var archives: (count: Int, size: UInt64)
+    var system: (count: Int, size: UInt64)
+    var other: (count: Int, size: UInt64)
 
     func getStats(for category: FileCategory) -> (count: Int, size: UInt64) {
         switch category {
@@ -1891,10 +1893,56 @@ class RustBridge: ObservableObject {
         }
     }
 
+    // Static callback for directory analysis progress (Int, UInt64) -> Void
+    // Protocol:
+    // - For directory analysis: filesProcessed = count, bytesProcessed = bytes
+    // - For duplicates phase 1 (scanning): filesProcessed = count, bytesProcessed = normal bytes
+    // - For duplicates phase 2 (hashing):
+    //   - Phase marker: bytesProcessed = 0xFFFFFFFF
+    //   - Progress: bytesProcessed = (total << 32) | current
+    nonisolated(unsafe) private static let staticDirectoryProgressCallback: @convention(c) (Int, UInt64) -> Void = { filesProcessed, bytesProcessed in
+        progressCallbackLock.lock()
+        let callback = progressCallback
+        progressCallbackLock.unlock()
+
+        if let callback = callback {
+            let progress: Double
+
+            // Check if this is the phase transition marker
+            if bytesProcessed == 0xFFFFFFFF {
+                // Start of hashing phase - set to 50% (scanning done, hashing starts)
+                progress = 0.50
+            } else if bytesProcessed > 0xFFFF_FFFF {
+                // Hashing phase with encoded progress (total << 32) | current
+                let current = Double(bytesProcessed & 0xFFFFFFFF)
+                let total = Double(bytesProcessed >> 32)
+
+                if total > 0 {
+                    // Map hashing progress from 50% to 99%
+                    // 0% hashed = 50%, 100% hashed = 99%
+                    let hashProgress = current / total
+                    progress = 0.50 + (hashProgress * 0.49)
+                } else {
+                    progress = 0.50
+                }
+            } else {
+                // Scanning phase - map to 0% to 50%
+                // Use square root for smoother growth
+                let sqrtProgress = sqrt(Double(filesProcessed))
+                let normalizedProgress = sqrtProgress / sqrt(100000.0)
+                progress = min(normalizedProgress * 0.50, 0.50)
+            }
+
+            Task { @MainActor in
+                callback(progress)
+            }
+        }
+    }
+
     func analyzeDirectory(
         path: String,
         topN: Int = 100,
-        minSize: UInt64 = 1024 * 1024, // 1 MB
+        minSize: UInt64 = 1024 * 1024, // 1 MB (not used in FFI, kept for API compatibility)
         progress: @escaping (Double) -> Void
     ) async throws -> DirectoryAnalysis {
         return try await withCheckedThrowingContinuation { continuation in
@@ -1913,18 +1961,9 @@ class RustBridge: ObservableObject {
                     return
                 }
 
-                var handle: UnsafeMutableRawPointer?
-
+                // Use the static callback instead of a local closure
                 let analysisPtr = path.withCString { pathPtr in
-                    withUnsafeMutablePointer(to: &handle) { handlePtr in
-                        analyze_directory(pathPtr, topN, minSize, Self.staticProgressCallback, handlePtr)
-                    }
-                }
-
-                // Store handle for cancellation (capture handle value before MainActor)
-                let handleValue = handle
-                await MainActor.run {
-                    self.currentAnalysisHandle = handleValue
+                    analyze_directory(pathPtr, topN, Self.staticDirectoryProgressCallback)
                 }
 
                 // Clear callback
@@ -1939,34 +1978,54 @@ class RustBridge: ObservableObject {
 
                 defer {
                     free_directory_analysis(analysisPtr)
-                    Task { @MainActor in
-                        self.currentAnalysisHandle = nil
-                    }
                 }
 
                 let cAnalysis = analysisPtr.pointee
 
-                // Convert largest files
+                // Convert largest files from CFileEntryList
                 var largestFiles: [FileEntry] = []
-                if let filesPtr = cAnalysis.largest_files, cAnalysis.largest_files_count > 0 {
-                    for i in 0..<cAnalysis.largest_files_count {
-                        let cFile = filesPtr[i]
-
-                        if let file = self.convertFileEntry(cFile) {
-                            largestFiles.append(file)
+                if let fileListPtr = cAnalysis.largest_files {
+                    let fileList = fileListPtr.pointee
+                    if let entriesPtr = fileList.entries, fileList.count > 0 {
+                        for i in 0..<fileList.count {
+                            let cFile = entriesPtr[i]
+                            if let file = self.convertFileEntry(cFile) {
+                                largestFiles.append(file)
+                            }
                         }
                     }
                 }
 
-                // Convert category stats
-                let categoryStats = FileCategoryStats(
-                    documents: (count: cAnalysis.category_stats.documents_count, size: cAnalysis.category_stats.documents_size),
-                    media: (count: cAnalysis.category_stats.media_count, size: cAnalysis.category_stats.media_size),
-                    code: (count: cAnalysis.category_stats.code_count, size: cAnalysis.category_stats.code_size),
-                    archives: (count: cAnalysis.category_stats.archives_count, size: cAnalysis.category_stats.archives_size),
-                    system: (count: cAnalysis.category_stats.system_count, size: cAnalysis.category_stats.system_size),
-                    other: (count: cAnalysis.category_stats.other_count, size: cAnalysis.category_stats.other_size)
+                // Convert category stats from CCategoryStatsList
+                var categoryStats = FileCategoryStats(
+                    documents: (count: 0, size: 0),
+                    media: (count: 0, size: 0),
+                    code: (count: 0, size: 0),
+                    archives: (count: 0, size: 0),
+                    system: (count: 0, size: 0),
+                    other: (count: 0, size: 0)
                 )
+
+                if let statsListPtr = cAnalysis.category_stats {
+                    let statsList = statsListPtr.pointee
+                    if let statsPtr = statsList.stats, statsList.count > 0 {
+                        for i in 0..<statsList.count {
+                            let cStat = statsPtr[i]
+                            let categoryData = (count: cStat.file_count, size: cStat.total_size)
+
+                            switch cStat.category {
+                            case 0: categoryStats.documents = categoryData
+                            case 1: categoryStats.media = categoryData
+                            case 2: categoryStats.code = categoryData
+                            case 3: categoryStats.archives = categoryData
+                            case 4: break // Applications - not in FileCategoryStats
+                            case 5: categoryStats.system = categoryData
+                            case 6: categoryStats.other = categoryData
+                            default: break
+                            }
+                        }
+                    }
+                }
 
                 let analysis = DirectoryAnalysis(
                     totalSize: cAnalysis.total_size,
@@ -2001,18 +2060,9 @@ class RustBridge: ObservableObject {
                     return
                 }
 
-                var handle: UnsafeMutableRawPointer?
-
+                // Use the static callback instead of a local closure
                 let listPtr = path.withCString { pathPtr in
-                    withUnsafeMutablePointer(to: &handle) { handlePtr in
-                        find_duplicates(pathPtr, minSize, Self.staticProgressCallback, handlePtr)
-                    }
-                }
-
-                // Store handle for cancellation (capture handle value before MainActor)
-                let handleValue = handle
-                await MainActor.run {
-                    self.currentAnalysisHandle = handleValue
+                    find_duplicates(pathPtr, minSize, Self.staticDirectoryProgressCallback)
                 }
 
                 // Clear callback
@@ -2027,9 +2077,6 @@ class RustBridge: ObservableObject {
 
                 defer {
                     free_duplicate_group_list(listPtr)
-                    Task { @MainActor in
-                        self.currentAnalysisHandle = nil
-                    }
                 }
 
                 let cList = listPtr.pointee
@@ -2041,23 +2088,23 @@ class RustBridge: ObservableObject {
 
                         let hash = self.safeStringFromCString(cGroup.hash)
 
-                        // Convert files in group
-                        var files: [FileEntry] = []
-                        if let filesPtr = cGroup.files, cGroup.files_count > 0 {
-                            for j in 0..<cGroup.files_count {
-                                let cFile = filesPtr[j]
-
-                                if let file = self.convertFileEntry(cFile) {
-                                    files.append(file)
+                        // Convert files in group (files are char** - array of strings)
+                        var files: [String] = []
+                        if let filesPtr = cGroup.files, cGroup.file_count > 0 {
+                            for j in 0..<cGroup.file_count {
+                                let filePathPtr = filesPtr[j]
+                                let filePath = self.safeStringFromCString(filePathPtr)
+                                if !filePath.isEmpty {
+                                    files.append(filePath)
                                 }
                             }
                         }
 
                         let group = DuplicateGroup(
                             hash: hash,
-                            files: files,
-                            totalSize: cGroup.total_size,
-                            wastedSpace: cGroup.wasted_space
+                            files: files.map { FileEntry(path: $0, size: cGroup.size_bytes, category: .other, modified: Date()) },
+                            totalSize: cGroup.size_bytes,
+                            wastedSpace: cGroup.total_wasted_space
                         )
 
                         duplicateGroups.append(group)
@@ -2070,26 +2117,31 @@ class RustBridge: ObservableObject {
     }
 
     func cancelCurrentAnalysis() {
-        if let handle = currentAnalysisHandle {
-            cancel_analysis(handle)
-            currentAnalysisHandle = nil
-        }
+        cancel_analysis()
     }
 
     // MARK: - Private Helpers
 
     nonisolated private func convertFileEntry(_ cFile: CFileEntry) -> FileEntry? {
         let path = safeStringFromCString(cFile.path)
+        let fileType = safeStringFromCString(cFile.file_type)
 
-        guard let category = FileCategory(rawValue: cFile.category) else {
-            return nil
+        // Derive category from file_type string
+        let category: FileCategory
+        switch fileType.lowercased() {
+        case "documents": category = .documents
+        case "media": category = .media
+        case "code": category = .code
+        case "archives": category = .archives
+        case "system": category = .system
+        default: category = .other
         }
 
-        let modified = Date(timeIntervalSince1970: TimeInterval(cFile.modified))
+        let modified = Date(timeIntervalSince1970: TimeInterval(cFile.modified_timestamp))
 
         return FileEntry(
             path: path,
-            size: cFile.size,
+            size: cFile.size_bytes,
             category: category,
             modified: modified
         )
