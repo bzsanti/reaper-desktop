@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "ReaperApp",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(
@@ -12,10 +12,13 @@ let package = Package(
             targets: ["ReaperApp"]
         )
     ],
+    dependencies: [
+        .package(path: "../ReaperShared"),
+    ],
     targets: [
         .executableTarget(
             name: "ReaperApp",
-            dependencies: [],
+            dependencies: ["ReaperShared"],
             linkerSettings: [
                 .unsafeFlags([
                     "-L../target/release",
@@ -24,8 +27,10 @@ let package = Package(
                     "-lreaper_memory_monitor",
                     "-lreaper_hardware_monitor",
                     "-lreaper_network_monitor",
+                    "-lreaper_disk_monitor",
                     "-framework", "Security",
-                    "-framework", "CoreFoundation"
+                    "-framework", "CoreFoundation",
+                    "-framework", "IOKit"
                 ])
             ]
         )

@@ -10,7 +10,7 @@ struct ContentView: View {
     
     // Version info
     private let appVersion = "0.4.7"  // Disk module expansion - Phase 1
-    private let buildVersion = "20251020135023"  // Unique build timestamp
+    private let buildVersion = "20251204225923"  // Unique build timestamp
     private let buildTimestamp = Date()
     
     var body: some View {
@@ -156,8 +156,16 @@ struct ContentView: View {
                         )
 
                         // CPU Temperature Badge
-                        if let hardware = rustBridge.hardwareMetrics,
+                        // Prefer XPC temperature for consistency with MenuBar when available
+                        if let xpcTemp = rustBridge.xpcTemperature {
+                            MetricBadge(
+                                label: "Temp",
+                                value: String(format: "%.0f°C", xpcTemp),
+                                color: colorForTemperature(xpcTemp)
+                            )
+                        } else if let hardware = rustBridge.hardwareMetrics,
                            let cpuTemp = hardware.temperatures.first(where: { $0.sensorType == .cpuPackage || $0.sensorType == .cpuCore }) {
+                            // Fallback to hardware sensors when XPC is not available
                             MetricBadge(
                                 label: "Temp",
                                 value: String(format: "%.0f°C", cpuTemp.valueCelsius),

@@ -87,24 +87,56 @@ cp ../target/release/libreaper_disk_monitor.dylib "$APP_BUNDLE/Contents/Framewor
 
 # Update library paths
 echo -e "${BLUE}Updating library paths...${NC}"
+# Get the current project root (one level up from ReaperMenuBar)
+PROJECT_ROOT="$(cd .. && pwd)"
+
 # Fix the library paths to use @rpath instead of absolute paths
-install_name_tool -change \
-    /Users/santifdezmunoz/Documents/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_cpu_monitor.dylib \
-    @rpath/libreaper_cpu_monitor.dylib \
-    "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar"
-    
-install_name_tool -change \
-    /Users/santifdezmunoz/Documents/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_disk_monitor.dylib \
-    @rpath/libreaper_disk_monitor.dylib \
-    "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar"
+# The linker may use either deps/ or direct release/ paths
+for old_path in \
+    "$PROJECT_ROOT/target/release/deps/libreaper_cpu_monitor.dylib" \
+    "$PROJECT_ROOT/target/release/libreaper_cpu_monitor.dylib" \
+    "/Volumes/WD_BLACK/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_cpu_monitor.dylib"; do
+    install_name_tool -change "$old_path" @rpath/libreaper_cpu_monitor.dylib "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar" 2>/dev/null || true
+done
+
+for old_path in \
+    "$PROJECT_ROOT/target/release/deps/libreaper_disk_monitor.dylib" \
+    "$PROJECT_ROOT/target/release/libreaper_disk_monitor.dylib" \
+    "/Volumes/WD_BLACK/repos/BelowZero/ReaperSuite/ReaperDesktop/target/release/deps/libreaper_disk_monitor.dylib"; do
+    install_name_tool -change "$old_path" @rpath/libreaper_disk_monitor.dylib "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar" 2>/dev/null || true
+done
 
 # Add rpath if not already present
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar" 2>/dev/null || true
+
+# Verify paths were updated
+echo -e "${BLUE}Verifying library paths...${NC}"
+otool -L "$APP_BUNDLE/Contents/MacOS/ReaperMenuBar" | grep -E "@rpath.*dylib" && echo -e "${GREEN}✓ Library paths updated to @rpath${NC}" || echo -e "${YELLOW}⚠ Library paths may need manual verification${NC}"
 
 # Sign the app
 if command -v codesign &> /dev/null; then
     echo -e "${BLUE}Signing app...${NC}"
     codesign --force --deep --sign - "$APP_BUNDLE"
+fi
+
+# Build ReaperMetricsService (Launch Agent for consistent metrics)
+echo ""
+echo -e "${BLUE}Building ReaperMetricsService...${NC}"
+cd ..
+if [ -d "ReaperMetricsService" ]; then
+    cd ReaperMetricsService
+    swift build -c release
+    if [ -f ".build/release/ReaperMetricsService" ]; then
+        echo -e "${GREEN}✓ ReaperMetricsService built successfully${NC}"
+        METRICS_SERVICE_BUILT=true
+    else
+        echo -e "${YELLOW}⚠ ReaperMetricsService build incomplete${NC}"
+        METRICS_SERVICE_BUILT=false
+    fi
+    cd ../ReaperMenuBar
+else
+    echo -e "${YELLOW}⚠ ReaperMetricsService directory not found${NC}"
+    METRICS_SERVICE_BUILT=false
 fi
 
 echo -e "${GREEN}✓ ReaperMenuBar.app created successfully!${NC}"
@@ -116,3 +148,20 @@ echo "2. Select your user and click 'Login Items'"
 echo "3. Click '+' and add ReaperMenuBar.app"
 echo ""
 echo "To run now: open $APP_BUNDLE"
+
+# Show metrics service instructions
+if [ "$METRICS_SERVICE_BUILT" = true ]; then
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}ReaperMetricsService (Launch Agent)${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "For consistent CPU readings between MenuBar and Desktop,"
+    echo "install the metrics service:"
+    echo ""
+    echo -e "  ${GREEN}cd ../ReaperMetricsService && ./install.sh${NC}"
+    echo ""
+    echo "The service runs as a Launch Agent and provides"
+    echo "shared metrics to both apps via XPC."
+    echo ""
+fi

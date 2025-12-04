@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "ReaperMenuBar",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .executable(
@@ -13,9 +13,13 @@ let package = Package(
             targets: ["ReaperMenuBar"]
         )
     ],
+    dependencies: [
+        .package(path: "../ReaperShared"),
+    ],
     targets: [
         .executableTarget(
             name: "ReaperMenuBar",
+            dependencies: ["ReaperShared"],
             path: "Sources",
             linkerSettings: [
                 .unsafeFlags([

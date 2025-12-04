@@ -150,6 +150,26 @@ if command -v codesign &> /dev/null; then
     echo -e "${GREEN}✓ App signed${NC}"
 fi
 
+# Build ReaperMetricsService (Launch Agent for consistent metrics)
+echo ""
+echo "Building ReaperMetricsService..."
+cd "$REAPER_APP_DIR/.."
+if [ -d "ReaperMetricsService" ]; then
+    cd ReaperMetricsService
+    nice -n 19 swift build -c release -j $MAX_CORES
+    if [ -f ".build/release/ReaperMetricsService" ]; then
+        echo -e "${GREEN}✓ ReaperMetricsService built successfully${NC}"
+        METRICS_SERVICE_BUILT=true
+    else
+        echo -e "${YELLOW}⚠ ReaperMetricsService build incomplete${NC}"
+        METRICS_SERVICE_BUILT=false
+    fi
+    cd ..
+else
+    echo -e "${YELLOW}⚠ ReaperMetricsService directory not found${NC}"
+    METRICS_SERVICE_BUILT=false
+fi
+
 # Final verification
 echo ""
 echo "Final verification:"
@@ -163,3 +183,21 @@ verify_file "$APP_BUNDLE/Contents/Frameworks/libreaper_disk_monitor.dylib" 30000
 echo ""
 echo -e "${GREEN}✓ Reaper.app bundle created successfully!${NC}"
 echo "Run with: open Reaper.app"
+
+# Show metrics service installation instructions
+if [ "$METRICS_SERVICE_BUILT" = true ]; then
+    echo ""
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}ReaperMetricsService (Launch Agent)${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "The metrics service ensures consistent CPU readings"
+    echo "between Desktop and MenuBar apps."
+    echo ""
+    echo "To install the service, run:"
+    echo -e "  ${GREEN}cd ReaperMetricsService && ./install.sh${NC}"
+    echo ""
+    echo "To uninstall:"
+    echo -e "  ${GREEN}cd ReaperMetricsService && ./uninstall.sh${NC}"
+    echo ""
+fi

@@ -1,6 +1,89 @@
 import Foundation
 import AppKit
 import SwiftUI
+import ReaperShared
+
+// MARK: - FFI Metrics Provider for Fallback
+
+/// Provider that uses direct FFI calls for metrics when XPC is unavailable
+final class FFIMetricsProviderDesktop: MetricsProviderProtocol {
+    private var initialized = false
+    private let lock = NSLock()
+
+    func initialize() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !initialized else { return }
+
+        // These are already called in RustBridge init
+        // Just mark as initialized
+        initialized = true
+    }
+
+    func refresh() {
+        // Refresh is handled by RustBridge's monitor_refresh calls
+    }
+
+    func getCpuMetrics() -> CpuMetricsData? {
+        guard initialized else { return nil }
+        guard let metricsPtr = get_cpu_metrics() else { return nil }
+        defer { free_cpu_metrics(metricsPtr) }
+
+        let cMetrics = metricsPtr.pointee
+
+        return CpuMetricsData(
+            totalUsage: cMetrics.total_usage,
+            coreCount: cMetrics.core_count,
+            loadAverage1: cMetrics.load_avg_1,
+            loadAverage5: cMetrics.load_avg_5,
+            loadAverage15: cMetrics.load_avg_15,
+            frequencyMHz: cMetrics.frequency_mhz
+        )
+    }
+
+    func getDiskMetrics() -> DiskMetricsData? {
+        guard initialized else { return nil }
+        guard let diskPtr = get_primary_disk() else { return nil }
+        defer { free_disk_info(diskPtr) }
+
+        let cDisk = diskPtr.pointee
+
+        let mountPoint = safeStringFromCChar(cDisk.mount_point)
+        let name = safeStringFromCChar(cDisk.name)
+
+        return DiskMetricsData(
+            mountPoint: mountPoint.isEmpty ? "/" : mountPoint,
+            name: name.isEmpty ? "Disk" : name,
+            totalBytes: cDisk.total_bytes,
+            availableBytes: cDisk.available_bytes,
+            usedBytes: cDisk.used_bytes,
+            usagePercent: cDisk.usage_percent
+        )
+    }
+
+    func getTemperature() -> TemperatureData? {
+        guard initialized else { return nil }
+
+        // Get CPU usage for simulated temperature
+        guard let metricsPtr = get_cpu_metrics() else { return nil }
+        defer { free_cpu_metrics(metricsPtr) }
+
+        let cpuUsage = metricsPtr.pointee.total_usage
+        return TemperatureData.simulated(fromCpuUsage: cpuUsage)
+    }
+
+    func cleanup() {
+        lock.lock()
+        defer { lock.unlock() }
+        initialized = false
+    }
+
+    private func safeStringFromCChar(_ cString: UnsafeMutablePointer<CChar>?) -> String {
+        guard let ptr = cString else { return "" }
+        return String(cString: ptr)
+    }
+}
 
 // MARK: - Process Tree FFI Declarations
 @_silgen_name("get_process_tree")
@@ -924,34 +1007,60 @@ class RustBridge: ObservableObject {
     @Published var networkMetrics: NetworkMetrics?
     @Published var primaryDisk: DiskMetrics?
     @Published var allDisks: [DiskMetrics] = []
-    
+
+    /// XPC temperature for consistent display with MenuBar
+    /// When useXPCForSharedMetrics is true, this holds the temperature from XPC service
+    /// This is a simulated temperature based on CPU usage, same as MenuBar displays
+    @Published var xpcTemperature: Float?
+
     private var refreshTimer: Timer?
     private let updateQueue = DispatchQueue(label: "com.cpumonitor.update", qos: .userInitiated)
     private var isUpdating = false
-    
+
     // Adaptive refresh intervals
     private var currentRefreshInterval: TimeInterval = 2.0
     private let activeRefreshInterval: TimeInterval = 1.0
     private let backgroundRefreshInterval: TimeInterval = 5.0
     private let idleRefreshInterval: TimeInterval = 10.0
-    
+
     // Track app state
     private var isAppActive = true
     private var lastSignificantChange = Date()
     private var previousCpuUsage: Float = 0
-    
+
+    // MARK: - XPC Metrics Manager
+    /// MetricsManager for shared XPC metrics (ensures consistency with MenuBar)
+    private let metricsManager: MetricsManager
+    private let ffiProvider: FFIMetricsProviderDesktop
+
+    /// Whether to use XPC for shared metrics (CPU, basic disk, temperature)
+    /// Set to true when Launch Agent is installed
+    var useXPCForSharedMetrics: Bool = true
+
     init() {
+        // Initialize FFI monitors
         monitor_init()
         memory_monitor_init()
         hardware_monitor_init()
         network_monitor_init()
         disk_monitor_init()
+
+        // Initialize FFI provider for fallback
+        ffiProvider = FFIMetricsProviderDesktop()
+        ffiProvider.initialize()
+
+        // Initialize MetricsManager with FFI fallback
+        metricsManager = MetricsManager(fallbackProvider: ffiProvider)
+        metricsManager.enableFallbackOnFailure = true
+        metricsManager.start()
+
         setupAppStateObservers()
         startRefreshTimer()
     }
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        metricsManager.cleanup()
     }
     
     private func setupAppStateObservers() {
@@ -1098,56 +1207,99 @@ class RustBridge: ObservableObject {
         // Skip refresh completely if app is not active
         guard isAppActive else { return }
         guard !isUpdating else { return }
-        
+
         isUpdating = true
-        
+
         Task {
-            await withCheckedContinuation { continuation in
+            // First, get FFI metrics on background queue
+            let ffiMetrics = await withCheckedContinuation { continuation in
                 updateQueue.async { [weak self] in
                     guard let self = self else {
-                        continuation.resume()
+                        continuation.resume(returning: (
+                            processes: [ProcessInfo](),
+                            cpuMetrics: nil as CpuMetrics?,
+                            highCpuProcesses: [ProcessInfo](),
+                            memoryMetrics: nil as MemoryMetrics?,
+                            topMemoryProcesses: [ProcessMemoryInfo](),
+                            memoryLeaks: [ProcessMemoryInfo](),
+                            cpuLimits: [CpuLimitInfo](),
+                            hardwareMetrics: nil as HardwareMetrics?,
+                            networkMetrics: nil as NetworkMetrics?,
+                            primaryDisk: nil as DiskMetrics?,
+                            allDisks: [DiskMetrics]()
+                        ))
                         return
                     }
-                    
+
                     monitor_refresh()
                     memory_monitor_refresh()
                     hardware_monitor_refresh()
                     refresh_network_data()
                     disk_monitor_refresh()
-                    
-                    let newProcesses = self.fetchProcessesSync()
-                    let newMetrics = self.fetchCpuMetricsSync()
-                    let newHighCpuProcesses = self.fetchHighCpuProcessesSync()
-                    let newMemoryMetrics = self.fetchMemoryMetricsSync()
-                    let newTopMemoryProcesses = self.fetchTopMemoryProcessesSync()
-                    let newMemoryLeaks = self.detectMemoryLeaksSync()
-                    let newCpuLimits = self.fetchCpuLimitsSync()
-                    let newHardwareMetrics = self.fetchHardwareMetricsSync()
-                    let newNetworkMetrics = self.fetchNetworkMetricsSync()
-                    let newPrimaryDisk = self.fetchPrimaryDiskSync()
-                    let newAllDisks = self.fetchAllDisksSync()
-                    
-                    Task { @MainActor in
-                        self.processes = newProcesses
-                        self.cpuMetrics = newMetrics
-                        self.highCpuProcesses = newHighCpuProcesses
-                        self.memoryMetrics = newMemoryMetrics
-                        self.topMemoryProcesses = newTopMemoryProcesses
-                        self.memoryLeaks = newMemoryLeaks
-                        self.cpuLimitedProcesses = newCpuLimits
-                        self.limitedProcessPids = Set(newCpuLimits.map { $0.pid })
-                        self.hardwareMetrics = newHardwareMetrics
-                        self.networkMetrics = newNetworkMetrics
-                        self.primaryDisk = newPrimaryDisk
-                        self.allDisks = newAllDisks
-                        
-                        // Adjust refresh rate based on activity
-                        self.adjustRefreshRate()
-                        self.isUpdating = false
-                    }
-                    
-                    continuation.resume()
+
+                    let result = (
+                        processes: self.fetchProcessesSync(),
+                        cpuMetrics: self.fetchCpuMetricsSync(),
+                        highCpuProcesses: self.fetchHighCpuProcessesSync(),
+                        memoryMetrics: self.fetchMemoryMetricsSync(),
+                        topMemoryProcesses: self.fetchTopMemoryProcessesSync(),
+                        memoryLeaks: self.detectMemoryLeaksSync(),
+                        cpuLimits: self.fetchCpuLimitsSync(),
+                        hardwareMetrics: self.fetchHardwareMetricsSync(),
+                        networkMetrics: self.fetchNetworkMetricsSync(),
+                        primaryDisk: self.fetchPrimaryDiskSync(),
+                        allDisks: self.fetchAllDisksSync()
+                    )
+
+                    continuation.resume(returning: result)
                 }
+            }
+
+            // Try XPC for shared metrics (CPU, Temperature) if enabled
+            var finalCpuMetrics = ffiMetrics.cpuMetrics
+            var finalXpcTemperature: Float? = nil
+
+            if useXPCForSharedMetrics {
+                // Get CPU metrics from XPC
+                if let xpcCpuMetrics = await metricsManager.getCpuMetrics() {
+                    // Convert XPC metrics to local CpuMetrics type
+                    finalCpuMetrics = CpuMetrics(
+                        totalUsage: xpcCpuMetrics.totalUsage,
+                        coreCount: xpcCpuMetrics.coreCount,
+                        loadAverage1: xpcCpuMetrics.loadAverage1,
+                        loadAverage5: xpcCpuMetrics.loadAverage5,
+                        loadAverage15: xpcCpuMetrics.loadAverage15,
+                        frequencyMHz: xpcCpuMetrics.frequencyMHz
+                    )
+                }
+
+                // Get temperature from XPC for consistency with MenuBar
+                if let xpcTemp = await metricsManager.getTemperature() {
+                    finalXpcTemperature = xpcTemp.cpuTemperature
+                }
+            }
+
+            // Update UI on main actor
+            await MainActor.run {
+                self.processes = ffiMetrics.processes
+                self.cpuMetrics = finalCpuMetrics
+                self.highCpuProcesses = ffiMetrics.highCpuProcesses
+                self.memoryMetrics = ffiMetrics.memoryMetrics
+                self.topMemoryProcesses = ffiMetrics.topMemoryProcesses
+                self.memoryLeaks = ffiMetrics.memoryLeaks
+                self.cpuLimitedProcesses = ffiMetrics.cpuLimits
+                self.limitedProcessPids = Set(ffiMetrics.cpuLimits.map { $0.pid })
+                self.hardwareMetrics = ffiMetrics.hardwareMetrics
+                self.networkMetrics = ffiMetrics.networkMetrics
+                self.primaryDisk = ffiMetrics.primaryDisk
+                self.allDisks = ffiMetrics.allDisks
+
+                // Update XPC temperature for header display (consistent with MenuBar)
+                self.xpcTemperature = finalXpcTemperature
+
+                // Adjust refresh rate based on activity
+                self.adjustRefreshRate()
+                self.isUpdating = false
             }
         }
     }

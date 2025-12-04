@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Unique identifier for this Launch Agent -->
+    <key>Label</key>
+    <string>com.reaper.metrics</string>
+
+    <!-- Path to the executable -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/ReaperMetricsService</string>
+    </array>
+
+    <!-- Mach service name - allows XPC connections -->
+    <key>MachServices</key>
+    <dict>
+        <key>com.reaper.metrics</key>
+        <true/>
+    </dict>
+
+    <!-- Keep alive settings -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Stay running as long as there are connections -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Run at load (when user logs in) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Throttle restarts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Standard output/error for debugging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/com.reaper.metrics.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.reaper.metrics.err.log</string>
+
+    <!-- Process type - standard for XPC services -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

@@ -41,7 +41,7 @@ class StatusItemController: NSObject {
     
     private func setupMenu() {
         menu = NSMenu()
-        
+
         // CPU usage item (non-clickable, just info)
         let cpuItem = NSMenuItem(title: "CPU Usage: --", action: nil, keyEquivalent: "")
         cpuItem.isEnabled = false
@@ -56,7 +56,14 @@ class StatusItemController: NSObject {
         let diskItem = NSMenuItem(title: "Disk Available: --", action: nil, keyEquivalent: "")
         diskItem.isEnabled = false
         menu?.addItem(diskItem)
-        
+
+        menu?.addItem(NSMenuItem.separator())
+
+        // Data source indicator
+        let sourceItem = NSMenuItem(title: "Source: --", action: nil, keyEquivalent: "")
+        sourceItem.isEnabled = false
+        menu?.addItem(sourceItem)
+
         menu?.addItem(NSMenuItem.separator())
         
         // Open Reaper item
@@ -111,55 +118,64 @@ class StatusItemController: NSObject {
     }
     
     private func updateSystemDisplay() {
-        let cpuUsage = systemMonitor.getCurrentCPUUsage()
-        let cpuInt = Int(cpuUsage)
-        let temperature = systemMonitor.getCurrentTemperature()
-        let tempInt = Int(temperature)
-        let diskMetrics = systemMonitor.getDiskMetrics()
+        // Use Task to call async methods without blocking
+        Task {
+            // Fetch all metrics asynchronously (no semaphores, no deadlocks)
+            let cpuUsage = await systemMonitor.getCurrentCPUUsage()
+            let temperature = await systemMonitor.getCurrentTemperature()
+            let diskMetrics = await systemMonitor.getDiskMetrics()
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+            let cpuInt = Int(cpuUsage)
+            let tempInt = Int(temperature)
 
-            // Update button title with CPU, Temperature, and Disk
-            if let button = self.statusItem?.button {
-                // Get emojis for metrics
-                let cpuEmoji = self.emojiForCPU(cpuInt)
-                let tempEmoji = self.emojiForTemperature(tempInt)
-                let diskEmoji = self.emojiForDisk(diskMetrics?.usagePercent ?? 0)
+            // Update UI on main thread
+            await MainActor.run {
+                // Update button title with CPU, Temperature, and Disk
+                if let button = self.statusItem?.button {
+                    // Get emojis for metrics
+                    let cpuEmoji = self.emojiForCPU(cpuInt)
+                    let tempEmoji = self.emojiForTemperature(tempInt)
+                    let diskEmoji = self.emojiForDisk(diskMetrics?.usagePercent ?? 0)
 
-                // Format display string: CPU | Temp | Disk
-                var displayString = ""
+                    // Format display string: CPU | Temp | Disk
+                    var displayString = ""
 
-                // CPU part
-                displayString += "\(cpuEmoji)\(cpuInt)%"
+                    // CPU part
+                    displayString += "\(cpuEmoji)\(cpuInt)%"
 
-                // Temperature part
-                displayString += " \(tempEmoji)\(tempInt)°"
+                    // Temperature part
+                    displayString += " \(tempEmoji)\(tempInt)°"
 
-                // Disk part
-                if let disk = diskMetrics {
-                    displayString += " \(diskEmoji)\(disk.formattedAvailable)"
+                    // Disk part
+                    if let disk = diskMetrics {
+                        displayString += " \(diskEmoji)\(disk.formattedAvailable)"
+                    }
+
+                    button.title = displayString
+
+                    // Apply monospaced font for consistent width
+                    let attributes: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+                    ]
+
+                    button.attributedTitle = NSAttributedString(string: button.title, attributes: attributes)
                 }
 
-                button.title = displayString
+                // Update menu items
+                if self.menu?.items.count ?? 0 >= 5 {
+                    self.menu?.items[0].title = String(format: "CPU Usage: %.1f%%", cpuUsage)
+                    self.menu?.items[1].title = String(format: "CPU Temperature: %.0f°C", temperature)
 
-                // Apply monospaced font for consistent width
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-                ]
+                    if let disk = diskMetrics {
+                        self.menu?.items[2].title = String(format: "Disk Available: %@ (%.0f%% used)",
+                                                          disk.formattedAvailable,
+                                                          disk.usagePercent)
+                    }
 
-                button.attributedTitle = NSAttributedString(string: button.title, attributes: attributes)
-            }
-
-            // Update menu items
-            if self.menu?.items.count ?? 0 >= 3 {
-                self.menu?.items[0].title = String(format: "CPU Usage: %.1f%%", cpuUsage)
-                self.menu?.items[1].title = String(format: "CPU Temperature: %.0f°C", temperature)
-
-                if let disk = diskMetrics {
-                    self.menu?.items[2].title = String(format: "Disk Available: %@ (%.0f%% used)",
-                                                      disk.formattedAvailable,
-                                                      disk.usagePercent)
+                    // Update source indicator (index 4, after separator at 3)
+                    let sourceText = self.systemMonitor.isUsingXPC ? "XPC Service" : "Local FFI"
+                    let sourceIcon = self.systemMonitor.isUsingXPC ? "🔗" : "⚡"
+                    self.menu?.items[4].title = "Source: \(sourceIcon) \(sourceText)"
                 }
             }
         }
@@ -201,7 +217,8 @@ class StatusItemController: NSObject {
     }
     
     private func adjustRefreshRate() {
-        let currentCPU = Int(systemMonitor.getCurrentCPUUsage())
+        // Use cached value to avoid blocking (async updates happen in updateSystemDisplay)
+        let currentCPU = Int(systemMonitor.getCachedCPUUsage())
         let cpuDelta = abs(currentCPU - lastCPUValue)
         
         if cpuDelta < 3 {
